@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="{{ locale }}">
+<head>
+    <meta charset="utf-8">
+    <title>{% trans %}fastapi-simple-i18n example{% endtrans %}</title>
+</head>
+<body>
+    <h1>{{ t("Welcome to the example app") }}</h1>
+
+    <p>{{ t("Hello, {name}!", name=who) }}</p>
+
+    <p>
+        {# The filter form takes the key from the left of the pipe. #}
+        <span>{{ "Archive" | t(variant="verb") }}</span>
+        <span>{{ "Archive" | t(_variant="noun") }}</span>
+    </p>
+
+    <p>{% trans %}Signed in{% endtrans %}</p>
+
+    <p>
+        {# A context maps to the library's variant: {% trans "verb" %} ... #}
+        <span>{% trans "verb" %}Archive{% endtrans %}</span>
+        <span>{% trans "noun" %}Archive{% endtrans %}</span>
+    </p>
+
+    <p>
+        {# Trans blocks interpolate with %(name)s, not {name}. #}
+        {% trans count=item_count %}There are {{ item_count }} items in your cart{% endtrans %}
+    </p>
+
+    <ul>
+        <li>{{ t_number(total) }}</li>
+        <li>{{ t_date(today) }}</li>
+        <li>{{ t_datetime(moment) }}</li>
+    </ul>
+</body>
+</html>

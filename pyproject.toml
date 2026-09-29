@@ -1,0 +1,136 @@
+[project]
+name = "fastapi-simple-i18n"
+version = "0.1.0"
+description = "Simple, module-friendly internationalization for FastAPI apps and CLI scripts"
+readme = "README.md"
+requires-python = ">=3.14"
+license = { text = "MIT" }
+authors = [{ name = "okelet" }]
+keywords = ["fastapi", "i18n", "internationalization", "translations", "babel"]
+dependencies = [
+    "babel>=2.16.0",
+]
+
+[project.optional-dependencies]
+# Only the ASGI middleware needs Starlette. The rest of the package (manager,
+# helpers, modules, extraction CLI) works without it.
+fastapi = [
+    "starlette>=0.38.0",
+]
+# Only the Jinja support (template helper, {% trans %} blocks, template
+# extraction) needs Jinja2. Everything else works without it.
+jinja = [
+    "jinja2>=3.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/okelet/fastapi-simple-i18n"
+Repository = "https://github.com/okelet/fastapi-simple-i18n"
+
+[dependency-groups]
+dev = [
+    "fastapi>=0.115.0",
+    "starlette>=0.38.0",
+    "httpx2>=2.0.0",
+    "jinja2>=3.1.0",
+    "ruff>=0.8.0",
+    "pylint>=3.3.0",
+    "isort>=5.13.0",
+    "pytest>=8.3.0",
+]
+examples = [
+    "fastapi>=0.115.0",
+    "jinja2>=3.1.0",
+    "uvicorn[standard]>=0.30.0",
+]
+docs = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fastapi_simple_i18n"]
+
+# --- Ruff ---
+
+[tool.ruff]
+line-length = 320
+target-version = "py314"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes
+    "I",      # isort
+    "N",      # pep8-naming
+    "W",      # pycodestyle warnings
+    "D",      # pydocstyle
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "SIM",    # flake8-simplify
+    "PLW",    # pylint warnings
+    "PLC",    # pylint conventions (includes PLC0415: import outside top-level)
+]
+extend-select = ["I"]
+ignore = [
+    "D100",   # missing docstring in public module (covered by file-level """)
+    "D104",   # missing docstring in public package
+    "D200",   # one-line docstrings: we use """ on its own line by convention
+    "D203",   # conflicts with D211
+    "D212",   # we use """ on own line, not same-line start
+    "D213",   # conflicts with D212
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "PLC0415"]
+"examples/**" = ["D"]
+
+# --- Pylint ---
+
+[tool.pylint]
+max-line-length = 320
+
+[tool.pylint.main]
+source-roots = ["src"]
+
+[tool.pylint.messages_control]
+disable = [
+    "unused-argument",
+    "unnecessary-ellipsis",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-lines",
+    "too-many-public-methods",
+    "too-few-public-methods",
+    "too-many-instance-attributes",
+    "too-many-return-statements",
+    "broad-exception-caught",
+    "missing-module-docstring",
+    "import-error",
+]
+
+# --- isort ---
+
+[tool.isort]
+line_length = 320
+profile = "black"
+
+# --- Pytest ---
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

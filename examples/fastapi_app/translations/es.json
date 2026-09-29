@@ -1,0 +1,47 @@
+{
+  "translations": [
+    {
+      "key": "Archive",
+      "value": "Archivo",
+      "variant": "noun"
+    },
+    {
+      "key": "Archive",
+      "value": "Archivar",
+      "variant": "verb"
+    },
+    {
+      "key": "Hello, {name}!",
+      "value": "¡Hola, {name}!"
+    },
+    {
+      "key": "My items",
+      "value": "Mis artículos",
+      "draft": true
+    },
+    {
+      "key": "Signed in",
+      "value": "Sesión iniciada"
+    },
+    {
+      "key": "There are %(item_count)s items in your cart",
+      "value": "Hay %(item_count)s artículos en tu carrito"
+    },
+    {
+      "key": "There are {item_count} items in your cart",
+      "value": "Hay {item_count} artículos en tu carrito"
+    },
+    {
+      "key": "Welcome to the example app",
+      "value": "Bienvenido a la aplicación de ejemplo"
+    },
+    {
+      "key": "Yes",
+      "value": "Sí"
+    },
+    {
+      "key": "fastapi-simple-i18n example",
+      "value": "ejemplo de fastapi-simple-i18n"
+    }
+  ]
+}
