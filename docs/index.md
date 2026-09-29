@@ -12,6 +12,9 @@ Simple, module-friendly internationalization for FastAPI apps and CLI scripts.
 * Babel helpers for locale-aware numbers, dates, and times.
 * Registrable translation **modules** so libraries can ship their own strings.
 * An AST-based extraction script to keep locale files in sync with the code.
+* A translation file web UI (FastAPI + HTMX + Alpine) that browses and edits
+  the locale JSON files directly. Its dependencies ship in the `web`
+  dependency group.
 
 ## Design at a glance
 

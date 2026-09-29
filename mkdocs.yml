@@ -17,6 +17,7 @@ nav:
   - Translation files: translation-files.md
   - Extracting translations: extraction.md
   - Modules: modules.md
+  - Translation file web UI: web.md
   - Building the docs: building-docs.md
   - API reference: api.md
 

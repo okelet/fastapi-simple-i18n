@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}{{ site_title }} — Locales{% endblock %}
+
+{% block content %}
+<div class="mb-6 flex flex-wrap items-end justify-between gap-3">
+  <div>
+    <h1 class="text-2xl font-bold tracking-tight">Locales</h1>
+    <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">
+      One JSON file per language in the configured directory. Click any locale to browse and edit its strings.
+    </p>
+  </div>
+</div>
+
+{% if not directory_exists %}
+{# Show the missing-directory hint in place of the list so an operator on a
+   fresh checkout knows what to do instead of staring at an empty page. #}
+<div class="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200">
+  <p class="font-semibold">The translations directory does not exist.</p>
+  <p class="mt-1 text-amber-800 dark:text-amber-300">
+    Create the directory and add at least one locale file, or set
+    <code class="rounded bg-amber-100 px-1 font-mono text-xs dark:bg-amber-500/20">FSI_WEB_TRANSLATIONS_DIR</code>
+    to the path that holds your existing locale files.
+  </p>
+  <p class="mt-2 font-mono text-xs">{{ directory }}</p>
+</div>
+{% else %}
+
+{% if not locales %}
+<div class="rounded-xl border border-slate-200 bg-white p-10 text-center dark:border-slate-700 dark:bg-slate-800">
+  <div class="mb-2 text-4xl" aria-hidden="true">📂</div>
+  <p class="text-sm text-slate-500 dark:text-slate-400">No <code class="rounded bg-slate-100 px-1 font-mono dark:bg-slate-700">*.json</code> locale files found in this directory.</p>
+</div>
+{% else %}
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+  <table class="w-full border-collapse">
+    <thead>
+      <tr class="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <th class="border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700">Locale</th>
+        <th class="hidden border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700 sm:table-cell">File</th>
+        <th class="border-b border-slate-200 px-4 py-2.5 text-right font-medium dark:border-slate-700">Entries</th>
+        <th class="hidden border-b border-slate-200 px-4 py-2.5 text-right font-medium dark:border-slate-700 sm:table-cell">Drafts</th>
+        <th class="hidden border-b border-slate-200 px-4 py-2.5 text-right font-medium dark:border-slate-700 sm:table-cell">Modified</th>
+        <th class="hidden border-b border-slate-200 px-4 py-2.5 text-right font-medium dark:border-slate-700 sm:table-cell">Size</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for loc in locales %}
+      <tr class="{{ 'opacity-60' if loc.error }}">
+        <td class="border-b border-slate-200 px-4 py-3 dark:border-slate-700">
+          {% if loc.error %}
+          <div class="flex items-center gap-2">
+            <span class="text-base" aria-hidden="true">⚠️</span>
+            <div class="min-w-0">
+              <div class="font-semibold text-rose-700 dark:text-rose-400">{{ loc.locale }}</div>
+              <div class="truncate text-xs text-slate-500 dark:text-slate-400" title="{{ loc.error }}">{{ loc.error }}</div>
+            </div>
+          </div>
+          {% else %}
+          <a href="/locales/{{ loc.locale }}" class="group flex items-center gap-2 text-sm font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300">
+            {% if loc.flag %}<span class="text-base" aria-hidden="true">{{ loc.flag }}</span>{% endif %}
+            <span class="truncate">{{ loc.display_name }}</span>
+            <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] font-medium text-slate-600 transition group-hover:bg-indigo-100 group-hover:text-indigo-700 dark:bg-slate-700 dark:text-slate-300 dark:group-hover:bg-indigo-500/20 dark:group-hover:text-indigo-300">{{ loc.locale }}</span>
+          </a>
+          {% endif %}
+        </td>
+        <td class="hidden border-b border-slate-200 px-4 py-3 font-mono text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 sm:table-cell">{{ loc.file_name }}</td>
+        <td class="border-b border-slate-200 px-4 py-3 text-right text-sm tabular-nums dark:border-slate-700">
+          {% if loc.error %}—{% else %}{{ loc.entry_count }}{% endif %}
+        </td>
+        <td class="hidden border-b border-slate-200 px-4 py-3 text-right text-sm tabular-nums dark:border-slate-700 sm:table-cell">
+          {% if loc.error %}—{% else %}
+            {% if loc.draft_count %}
+              <span class="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">{{ loc.draft_count }}</span>
+            {% else %}
+              <span class="text-slate-400">0</span>
+            {% endif %}
+          {% endif %}
+        </td>
+        <td class="hidden border-b border-slate-200 px-4 py-3 text-right text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 sm:table-cell">{{ format_modified(loc.modified) }}</td>
+        <td class="hidden border-b border-slate-200 px-4 py-3 text-right text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 sm:table-cell">{{ format_bytes(loc.size) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

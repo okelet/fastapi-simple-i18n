@@ -28,6 +28,14 @@ src/fastapi_simple_i18n/
     middleware.py          # TranslationMiddleware (pure ASGI)
     jinja.py               # Jinja2 runtime helpers + template extraction (optional 'jinja' extra)
     extract_translations.py# AST/Jinja extraction CLI (python -m ...)
+    web/                   # Translation file web UI (FastAPI + HTMX + Alpine)
+        __init__.py        # no top-level re-exports; import from submodules
+        app.py             # FastAPI app factory + routes
+        config.py          # Settings (FSI_WEB_* env prefix, pydantic-settings)
+        catalog.py         # pure helpers: read locale files, fold/filter/paginate, placeholders
+        storage.py         # write side: atomic temp+rename + CRUD helpers
+        templates/         # base.html, locales.html, strings.html, partials/_results.html, partials/_entry_form.html
+        static/            # favicon
 examples/
     fastapi_app/           # runnable FastAPI example (i18n.py, main.py, templating.py, templates/, translations/)
     cli_app/               # runnable CLI example
@@ -120,6 +128,8 @@ uv run pytest
 
 Dependency groups (PEP 735, run with `uv run --group <name>`):
 
+* `web` — `fastapi` + `jinja2` + `pydantic-settings` + `python-multipart` + `uvicorn`,
+  to run the translation web UI (`fastapi_simple_i18n.web.app`).
 * `examples` — `fastapi` + `jinja2` + `uvicorn`, to run the example app/CLI.
 * `docs` — `mkdocs` + `mkdocs-material`, to build/serve the docs.
 
@@ -144,8 +154,8 @@ is just `babel`. Because `extract_translations.py` must keep working without
 Jinja2, it imports `jinja.py` on demand with `importlib`, and only when a module
 actually declares template directories, instead of with a top-level import.
 
-Current status: ruff clean, isort clean, pylint 10.00/10, 90 tests passing, with
-no warnings.
+Current status: ruff clean, isort clean, pylint 10.00/10, 133 tests passing (40 in
+`tests/test_web.py` for the web UI), with no warnings.
 
 Note: `registry.py` and `locale.py` each carry one intentional module-level
 mutable global (`_current_manager`, `_default_locale`) with a
@@ -181,6 +191,106 @@ uv run python -m fastapi_simple_i18n.extract_translations examples.fastapi_app.i
 uv run --group docs mkdocs serve
 uv run --group docs mkdocs build --strict
 ```
+
+# Translation web UI
+uv run --group web python -c "from starlette.testclient import TestClient; from fastapi_simple_i18n.web.app import create_app; from fastapi_simple_i18n.web.config import Settings; app=create_app(Settings(translations_dir='examples/fastapi_app/translations')); c=TestClient(app); print(c.get('/').status_code, c.get('/locales/es').status_code, c.get('/healthz').json())"
+```
+
+## Translation web UI
+
+`src/fastapi_simple_i18n/web/` is a small FastAPI + Jinja2 + HTMX + Alpine UI that
+reads and edits the locale JSON files directly — no database, no migration,
+no second format. It exists in this repo because the developer tool that
+helped write the library deserves to ship with it, but it is a **development
+tool**: its dependencies are a PEP 735 group, not a published wheel extra.
+
+### Running it
+
+```bash
+uv sync --group web
+FSI_WEB_TRANSLATIONS_DIR=/path/to/translations \\
+    uv run --group web uvicorn fastapi_simple_i18n.web.app:app
+```
+
+The directory is the only configuration knob (`FSI_WEB_TRANSLATIONS_DIR`,
+defaults to `./translations`). The UI shows every `*.json` in that directory
+as a locale; each opens a strings page with a free-text search, a variant
+multiselect, a draft tri-state, pagination, and per-row Edit / Delete /
+"New string" actions. Writes go through `storage.write_entries`, which writes
+to a temporary file in the same directory and then `os.replace`s it onto the
+target so a crash mid-save never leaves a truncated JSON behind.
+
+### Layout
+
+* `web/config.py` — pydantic-settings (`FSI_WEB_TRANSLATIONS_DIR`,
+  `FSI_WEB_PAGE_SIZE`, `FSI_WEB_SITE_TITLE`).
+* `web/catalog.py` — read-only helpers. No I/O at import time, no globals:
+  `list_locales`, `load_catalog`, `filter_rows`, `paginate`, `placeholder_issues`,
+  `collect_variants`, `flag_emoji`, `locale_display_name`, `locale_path`. The
+  latter is the path-traversal guard (a regex; no dot, no separator, no NUL).
+* `web/storage.py` — write side. `load_entries`, `create_entry`, `update_entry`,
+  `delete_entry`, `write_entries`. Mutations are pure (return a new list) and
+  the persist step is atomic.
+* `web/app.py` — FastAPI factory + routes. Mounts `/static`, serves
+  `/healthz`, returns a 204 + `HX-Trigger` for HTMX success (close dialog,
+  refresh table, raise toast) and a 422 carrying the re-rendered form on
+  validation failure. The form fragment lives in
+  `web/templates/partials/_entry_form.html` and is shared between Edit and
+  Create; `mode` selects the action and the posted fields.
+* `web/templates/base.html` — shared shell. Inline `<head>` script applies
+  the stored theme (light / dark / system, in `localStorage.themeMode`) before
+  first paint to avoid a flash; Alpine's `themePicker` component keeps the
+  `dark` class in sync with `matchMedia('(prefers-color-scheme: dark)')`. The
+  dialog is a native `<dialog>` with `dialog.showModal()` from JS and
+  `dialog.close()` on the `HX-Trigger: {"close-entry-dialog": ...}` response,
+  which gets free focus trapping and `Esc`-to-close.
+
+### Key design decisions
+
+* **No second format.** The UI calls `dump_translation_file` (the same
+  serializer the extraction script uses) so re-saving an unchanged file is a
+  no-op on disk and round-trips through `TranslationFile.from_json` byte for
+  byte. New entries land at the end of the file in creation order; existing
+  entries are edited in place, so a one-line edit is a one-line diff in git.
+* **Server-side filtering, Alpine-driven shell.** The filter form posts to
+  `GET /locales/{locale}/strings` and HTMX swaps `#strings-result`. The
+  page shell and the form never re-render, so the form's Alpine state (text,
+  selected variants, draft tri-state, page) survives every search. The URL
+  is mirrored via `history.replaceState`, so reloading the page preserves the
+  filters without flooding the back button.
+* **The variant multiselect reserves the empty string** for "no variant".
+  An entry with `variant = None` matches the empty option; an entry with a
+  real variant matches the option carrying that exact string. Two separate
+  entries with the same `(key, variant)` pair are refused at save time
+  rather than silently dropped (the editor's view, where duplicates matter,
+  differs from the library's runtime index, which silently dedupes).
+* **Tristate is a native `<select>`, not a custom widget.** The user asked
+  for a "tristate select" specifically; a `<select>` is accessible, mobile-
+  friendly and works without JavaScript. The variant multiselect is Alpine-
+  driven because a native `<select multiple>` is genuinely unusable; that
+  same pattern was copied from `wallet-summary`.
+* **Placeholders are checked and flagged in the table.** Every row with a
+  placeholder mismatch (a `{name}` in the source missing from the value, or
+  vice versa) shows a red badge next to the translation. Both
+  `str.format` (`{name}`) and `gettext` (`%(name)s`) are recognised.
+* **The dialog is a native `<dialog>`.** It gets `Esc`-to-close, focus
+  trapping and the top layer for free, and we open it with
+  `dialog.showModal()` so its z-index never fights a dropdown.
+* **Errors are re-rendered into the form (HTTP 422).** A base-level
+  `htmx:beforeSwap` handler opts 422 responses into the swap, the same
+  pattern as `wallet-summary`. The user therefore sees inline validation
+  errors instead of an invisible "nothing happened" failure.
+
+### Things deliberately out of scope
+
+* **No auth.** The tool is meant to run behind a reverse proxy or on a
+  developer's machine; if it is exposed to the internet, gate it at the
+  proxy.
+* **No editor for the JSON itself (rename, reorder, batch delete).** Adding
+  those is straightforward but goes beyond "minima".
+* **The UI is English.** Dogfooding the library's own `t()` is the obvious
+  improvement, but the UI runs in the same environment it manages, which
+  raises a chicken-and-egg question worth resolving first.
 
 ## Ideas for future work
 

@@ -22,17 +22,32 @@ fastapi = [
 jinja = [
     "jinja2>=3.1.0",
 ]
-
 [project.urls]
 Homepage = "https://github.com/okelet/fastapi-simple-i18n"
 Repository = "https://github.com/okelet/fastapi-simple-i18n"
 
 [dependency-groups]
-dev = [
+# Everything needed to RUN the translation web UI (fastapi_simple_i18n.web):
+# FastAPI, Jinja2 for its templates, pydantic-settings for its configuration,
+# python-multipart to read the edit forms and uvicorn to serve it. Deliberately
+# a group and not an extra: the UI is a development tool that ships with the
+# repository, not something a library user installs as a dependency.
+#
+#   uv sync --group web
+#   uv run --group web uvicorn fastapi_simple_i18n.web.app:app
+web = [
     "fastapi>=0.115.0",
+    "jinja2>=3.1.0",
+    "pydantic-settings>=2.7.0",
+    "python-multipart>=0.0.20",
+    "uvicorn[standard]>=0.30.0",
+]
+# dev pulls in `web` so a plain `uv run pytest` exercises the UI too; the
+# tooling below is what the test suite and the linters need.
+dev = [
+    {include-group = "web"},
     "starlette>=0.38.0",
     "httpx2>=2.0.0",
-    "jinja2>=3.1.0",
     "ruff>=0.8.0",
     "pylint>=3.3.0",
     "isort>=5.13.0",

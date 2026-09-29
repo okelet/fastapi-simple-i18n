@@ -1,0 +1,125 @@
+{# Results fragment swapped in by HTMX. Mirrors ../wallet-summary's _results
+   pattern: server-rendered so the page is fully usable with JS disabled. #}
+
+{% if not page or not page.rows %}
+<div class="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+  {% if filter and not filter.is_empty %}
+    No entries match these filters.
+  {% else %}
+    This locale file is empty.
+  {% endif %}
+</div>
+{% else %}
+<div class="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800">
+  <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-4 py-2.5 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+    <span>Showing <strong class="text-slate-700 dark:text-slate-200">{{ page.range_start }}–{{ page.range_end }}</strong> of <strong class="text-slate-700 dark:text-slate-200">{{ page.total }}</strong> entries</span>
+    {% if filter and not filter.is_empty %}
+    <button type="button" @click="clear()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400">Clear filters</button>
+    {% endif %}
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full border-collapse">
+      <thead>
+        <tr class="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          <th class="border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700">Original</th>
+          <th class="border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700">Translation</th>
+          <th class="hidden border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700 sm:table-cell">Variant</th>
+          <th class="hidden border-b border-slate-200 px-4 py-2.5 text-left font-medium dark:border-slate-700 sm:table-cell">Flags</th>
+          <th class="border-b border-slate-200 px-4 py-2.5 text-right font-medium dark:border-slate-700">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in page.rows %}
+        <tr class="even:bg-slate-50/70 dark:even:bg-slate-900/30">
+          <td class="border-b border-slate-200 px-4 py-2.5 align-top text-sm dark:border-slate-700">
+            <div class="font-medium text-slate-800 dark:text-slate-100">{{ row.key }}</div>
+          </td>
+          <td class="border-b border-slate-200 px-4 py-2.5 align-top text-sm dark:border-slate-700">
+            {% if row.is_empty %}
+              <span class="italic text-slate-400 dark:text-slate-500">untranslated</span>
+            {% else %}
+              <span class="text-slate-700 dark:text-slate-200">{{ row.value }}</span>
+            {% endif %}
+            {% set issues = placeholder_issues(row.key, row.value) %}
+            {% if issues %}
+              <div class="mt-1 flex flex-wrap gap-1">
+                {% for issue in issues %}
+                  <span class="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:bg-rose-500/15 dark:text-rose-300" title="Placeholder mismatch">{{ issue }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+          </td>
+          <td class="hidden border-b border-slate-200 px-4 py-2.5 align-top text-sm dark:border-slate-700 sm:table-cell">
+            {% if row.variant %}
+              <span class="rounded bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">{{ row.variant }}</span>
+            {% else %}
+              <span class="text-slate-400">—</span>
+            {% endif %}
+          </td>
+          <td class="hidden border-b border-slate-200 px-4 py-2.5 align-top text-sm dark:border-slate-700 sm:table-cell">
+            {% if row.draft %}
+              <span class="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">draft</span>
+            {% else %}
+              <span class="text-xs text-slate-400">—</span>
+            {% endif %}
+          </td>
+          <td class="border-b border-slate-200 px-4 py-2.5 align-top text-right dark:border-slate-700">
+            <div class="inline-flex items-center gap-1">
+              {# Edit opens the shared dialog. The HTMX request loads the form
+                 into #entry-form; the @click dispatches the open event so the
+                 dialog appears as soon as the user clicks (the body swaps in
+                 in parallel). #}
+              <button type="button"
+                      hx-get="/locales/{{ locale }}/entry?index={{ row.index }}"
+                      hx-target="#entry-form" hx-swap="innerHTML"
+                      hx-indicator="#entry-spinner"
+                      @click="$dispatch('open-entry-dialog')"
+                      title="Edit entry"
+                      aria-label="Edit entry"
+                      class="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">Edit</button>
+              <button type="button"
+                      hx-post="/locales/{{ locale }}/entry/delete"
+                      hx-vals='{{ {"index": row.index} | tojson }}'
+                      hx-swap="none"
+                      hx-confirm="Delete this entry?"
+                      hx-on::after-request="if (event.detail.successful) htmx.trigger('#strings-form', 'search')"
+                      title="Delete entry"
+                      aria-label="Delete entry"
+                      class="inline-flex items-center gap-1 rounded-md border border-rose-200 px-2 py-1 text-xs font-medium text-rose-600 transition hover:bg-rose-50 dark:border-rose-500/40 dark:text-rose-300 dark:hover:bg-rose-500/10">Delete</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if page.total_pages > 1 %}
+  <div class="flex items-center justify-between gap-3 border-t border-slate-200 px-4 py-2.5 text-sm text-slate-600 dark:border-slate-700 dark:text-slate-300">
+    <button type="button"
+            class="rounded-lg border border-slate-200 px-3 py-1.5 font-medium transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:enabled:hover:bg-slate-700"
+            {% if not page.has_previous %}disabled{% endif %}
+            @click="goPage({{ page.page - 1 }})">
+      ← Prev
+    </button>
+    <span class="text-xs text-slate-500 dark:text-slate-400">Page {{ page.page }} of {{ page.total_pages }}</span>
+    <button type="button"
+            class="rounded-lg border border-slate-200 px-3 py-1.5 font-medium transition enabled:hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:enabled:hover:bg-slate-700"
+            {% if not page.has_next %}disabled{% endif %}
+            @click="goPage({{ page.page + 1 }})">
+      Next →
+    </button>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# Open the dialog when HTMX loads the form. The form lives inside the dialog
+   (inside #entry-form), so an empty body just closes the wrapper. #}
+<script>
+document.addEventListener('open-entry-dialog', function () {
+    var dlg = document.getElementById('entry-dialog');
+    if (dlg && !dlg.open) dlg.showModal();
+});
+</script>

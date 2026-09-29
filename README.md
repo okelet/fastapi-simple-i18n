@@ -24,6 +24,8 @@ Babel-powered number/date/time formatting.
   files, marking new strings as drafts and preserving existing translations.
 * Jinja2 templates: `t()`, a `t` filter and `{% trans %}` blocks resolve against
   the same catalog, with configurable names.
+* A translation file web UI (FastAPI + HTMX + Alpine) that browses and edits
+  the locale JSON files directly, ships in the `web` dependency group.
 * Works in CLI scripts by configuring the manager and locale manually.
 
 ## Installation
@@ -186,6 +188,32 @@ Run the CLI example:
 ```bash
 uv run --group examples python -m examples.cli_app.main --locale es
 ```
+
+## Translation file web UI
+
+`src/fastapi_simple_i18n/web/` ships a small FastAPI + Jinja2 + HTMX + Alpine
+app that browses and edits the locale JSON files directly, no database. It is
+a developer tool that ships with the repository, not a published extra: its
+dependencies live in the `web` dependency group.
+
+```bash
+FSI_WEB_TRANSLATIONS_DIR=/path/to/translations uv run --group web uvicorn fastapi_simple_i18n.web.app:app
+```
+
+The directory holds one `*.json` per locale (the same format
+`dump_translation_file` writes). The UI shows every locale with its entry /
+draft / untranslated counts; each opens a strings page with a free-text
+search, a variant multiselect (with a "(no variant)" option for entries that
+carry no variant), a draft tri-state, server-side pagination, and per-row
+Edit / Delete / "New string" actions. Placeholder mismatches between the
+source string and the translation are flagged inline. Writes are atomic
+(temp + `os.replace`) and the same serializer the extraction script uses,
+so re-saving an unchanged file is a no-op on disk.
+
+Configuration is read from `FSI_WEB_*` environment variables
+(`FSI_WEB_TRANSLATIONS_DIR`, `FSI_WEB_PAGE_SIZE`, `FSI_WEB_SITE_TITLE`). The
+tool is meant to run behind a reverse proxy or on a developer's machine; it
+ships no auth.
 
 ## Documentation
 

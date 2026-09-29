@@ -1,0 +1,94 @@
+{# Edit / create dialog body. HTMX swaps this into #entry-form; the dialog
+   wrapper itself lives in base.html so the same modal is reused for both
+   actions. ``mode`` selects which endpoint the form posts to and which fields
+   it carries. #}
+
+{% if error and not row %}
+  {# File unreadable: the entire dialog body becomes an error banner. #}
+  <div class="px-1 py-2 text-sm text-rose-700 dark:text-rose-300">{{ error }}</div>
+  <div class="mt-4 flex justify-end">
+    <button type="button" onclick="document.getElementById('entry-dialog').close()" class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">Close</button>
+  </div>
+{% else %}
+<form {% if mode == 'create' %}
+        hx-post="/locales/{{ locale }}/entry/new"
+      {% else %}
+        hx-post="/locales/{{ locale }}/entry"
+      {% endif %}
+      hx-target="#entry-form" hx-swap="innerHTML"
+      hx-disabled-elt="button[type=submit]"
+      class="text-sm">
+
+  <input type="hidden" name="index" value="{{ row.index if row else 0 }}">
+
+  <div class="mb-3 flex items-center justify-between">
+    <h2 class="text-base font-semibold">
+      {% if mode == 'create' %}
+        New string <span class="ml-1 font-mono text-xs text-slate-500 dark:text-slate-400">· {{ locale }}</span>
+      {% else %}
+        Edit string <span class="ml-1 font-mono text-xs text-slate-500 dark:text-slate-400">· {{ locale }}</span>
+      {% endif %}
+    </h2>
+    <button type="button" onclick="document.getElementById('entry-dialog').close()" aria-label="Close"
+            class="shrink-0 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-700 dark:hover:text-slate-200">✕</button>
+  </div>
+
+  {% if error %}
+    <div role="alert" class="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+      {{ error }}
+    </div>
+  {% endif %}
+
+  {# Source string: rendered as a read-only block (not an input) so a
+     translator sees the original text as reference and never accidentally
+     edits it. In create mode it is editable, since there is no source yet. #}
+  <div class="mb-3">
+    <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Original</span>
+    {% if mode == 'create' %}
+      <input type="text" name="key" required autocomplete="off"
+             value="{{ row.key if row else '' }}"
+             placeholder="The source string…"
+             class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500">
+    {% else %}
+      <div class="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200">{{ row.key }}</div>
+    {% endif %}
+  </div>
+
+  <div class="mb-3">
+    <label for="entry-value" class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Translation</label>
+    <textarea id="entry-value" name="value" rows="4" required
+              placeholder="The translated string…"
+              class="mt-1 w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500">{{ row.value if row else '' }}</textarea>
+  </div>
+
+  <div class="mb-3">
+    <label for="entry-variant" class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Variant</label>
+    <input id="entry-variant" name="variant" type="text" autocomplete="off"
+           list="known-variants-{{ locale }}"
+           value="{{ row.variant if row and row.variant else '' }}"
+           placeholder="(no variant)"
+           class="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500">
+    <datalist id="known-variants-{{ locale }}">
+      {% for v in all_variants %}<option value="{{ v }}"></option>{% endfor %}
+    </datalist>
+  </div>
+
+  <div class="mb-4">
+    <label class="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm transition hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-700">
+      <input type="checkbox" name="draft" value="on" {{ 'checked' if row and row.draft else '' }}
+             class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40 dark:border-slate-500 dark:bg-slate-900">
+      <span class="text-slate-700 dark:text-slate-200">Mark as draft</span>
+    </label>
+  </div>
+
+  <div class="mt-5 flex items-center justify-end gap-2">
+    <button type="button" onclick="document.getElementById('entry-dialog').close()"
+            class="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700">Cancel</button>
+    <button type="submit"
+            class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60">
+      <span id="entry-form-spinner" class="htmx-indicator h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
+      Save
+    </button>
+  </div>
+</form>
+{% endif %}

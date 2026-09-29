@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}{{ display_name }} ({{ locale }}) — {{ site_title }}{% endblock %}
+
+{% block head %}
+{# Seed the variant list for the multiselect as JSON in a <script> tag (never
+   inline in an x-data attribute — the JSON's double quotes would truncate the
+   attribute and break Alpine). The data is the union of every variant across
+   every locale file in the directory; that makes the same option list apply
+   to every locale and keeps the filter comparable across them. #}
+<script id="all-variants" type="application/json">{{ all_variants | tojson }}</script>
+<script>
+    {# stringsForm: Alpine component owning the filter state. Mirrors every
+       change to the URL (replaceState only — the back button is not flooded
+       on every keystroke) and asks HTMX to re-run the "search" trigger of the
+       form, which hits GET /locales/{locale}/strings and swaps #strings-result.
+       Debounced on the text input. #}
+    document.addEventListener('alpine:init', function () {
+        Alpine.data('stringsForm', function () {
+            return {
+                q: '',
+                variants: [],
+                draft: '',
+                page: 1,
+                allVariants: JSON.parse(document.getElementById('all-variants').textContent || '[]'),
+                init() {
+                    var params = new URLSearchParams(window.location.search);
+                    this.q = params.get('q') || '';
+                    this.variants = params.getAll('variant');
+                    this.draft = params.get('draft') || '';
+                    this.page = Math.max(1, parseInt(params.get('page') || '1', 10) || 1);
+                    var self = this;
+                    this.$watch('q', function () { self.run(); });
+                    this.$watch('variants', function () { self.run(); });
+                    this.$watch('draft', function () { self.run(); });
+                },
+                run() {
+                    this.page = 1;
+                    this.syncUrl();
+                    var form = document.getElementById('strings-form');
+                    if (form) htmx.trigger(form, 'search');
+                },
+                setDraft(value) {
+                    this.draft = this.draft === value ? '' : value;
+                },
+                clear() {
+                    this.q = '';
+                    this.variants = [];
+                    this.draft = '';
+                    this.run();
+                },
+                syncUrl() {
+                    var params = new URLSearchParams();
+                    if (this.q) params.set('q', this.q);
+                    for (var i = 0; i < this.variants.length; i++) params.append('variant', this.variants[i]);
+                    if (this.draft) params.set('draft', this.draft);
+                    if (this.page > 1) params.set('page', String(this.page));
+                    var qs = params.toString();
+                    history.replaceState({}, '', location.pathname + (qs ? '?' + qs : ''));
+                },
+                goPage(n) {
+                    this.page = Math.max(1, n);
+                    this.syncUrl();
+                    var form = document.getElementById('strings-form');
+                    if (form) htmx.trigger(form, 'search');
+                },
+                get hasFilters() {
+                    return !!(this.q || this.variants.length || this.draft);
+                },
+                draftLabel(value) {
+                    return value === 'draft' ? 'Draft only' : (value === 'final' ? 'Final only' : 'Any');
+                }
+            };
+        });
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+{# Page shell: header, filter form, and the HTMX target the form swaps into.
+   The fragment partials/_results.html re-renders the table + pager; the form
+   itself stays put so Alpine's state survives the swap. #}
+
+<div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+  <div class="min-w-0">
+    <div class="mb-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <a href="/" class="hover:underline">Locales</a>
+      <span aria-hidden="true">›</span>
+      <span class="truncate">{{ display_name }}</span>
+    </div>
+    <h1 class="flex items-center gap-2 text-2xl font-bold tracking-tight">
+      {% if flag %}<span aria-hidden="true">{{ flag }}</span>{% endif %}
+      <span class="truncate">{{ display_name }}</span>
+      <span class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[12px] font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">{{ locale }}</span>
+    </h1>
+    <p class="mt-1 text-xs text-slate-500 dark:text-slate-400">
+      <code class="rounded bg-slate-100 px-1 font-mono text-[11px] dark:bg-slate-700">{{ file_name }}</code>
+      · {{ total }} entries ({{ drafts }} drafts, {{ empty_count }} untranslated)
+    </p>
+  </div>
+  <button type="button"
+          hx-get="/locales/{{ locale }}/entry/new"
+          hx-target="#entry-form" hx-swap="innerHTML"
+          hx-indicator="#entry-spinner"
+          @click="$dispatch('open-entry-dialog')"
+          class="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+    <span aria-hidden="true">+</span>
+    New string
+  </button>
+</div>
+
+{# Loading spinner lives inside the dialog wrapper so HTMX can mark it during
+   the form-fetch request regardless of which row triggered it. #}
+<div id="entry-spinner" class="htmx-indicator">Loading…</div>
+
+<form id="strings-form" x-data="stringsForm"
+      hx-get="/locales/{{ locale }}/strings"
+      hx-target="#strings-result" hx-swap="innerHTML"
+      hx-trigger="search"
+      hx-indicator="#results-loading"
+      hx-push-url="false"
+      @submit.prevent
+      class="mb-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-800">
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-12">
+
+    <div class="flex flex-col gap-1 lg:col-span-5">
+      <label for="q" class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Search</label>
+      <div class="relative">
+        <input type="search" id="q" name="q" x-model="q"
+               @input.debounce.250ms="run()"
+               placeholder="Match original and translation (case- and accent-insensitive)…"
+               class="w-full rounded-lg border border-slate-200 px-3 py-2 pr-8 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500">
+        <button type="button" x-show="q" x-cloak @click="q = ''; run()" aria-label="Clear search"
+                class="absolute inset-y-0 right-0 flex items-center pr-2.5 text-slate-400 transition hover:text-slate-700 dark:hover:text-slate-200">✕</button>
+      </div>
+    </div>
+
+    {# Variant multiselect. Mirrors ../wallet-summary's category multiselect:
+       a button shows "N selected" or "Any variant", a popover lists the
+       variants plus a "(no variant)" option. #}
+    <div class="flex flex-col gap-1 lg:col-span-4" x-data="{ open: false, q: '' }" @click.outside="open = false">
+      <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Variants</span>
+      <button type="button" @click="open = !open; q = ''"
+              class="inline-flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-700">
+        <span x-text="variants.length ? variants.length + ' selected' : 'Any variant'"></span>
+        <span class="text-slate-400">▾</span>
+      </button>
+      <div x-show="open" x-cloak
+           class="absolute z-20 mt-1 max-h-72 w-64 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg dark:border-slate-600 dark:bg-slate-800">
+        <div class="border-b border-slate-100 p-1.5 dark:border-slate-700">
+          <input type="search" x-model="q" placeholder="Filter variants…"
+                 class="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:placeholder:text-slate-500">
+        </div>
+        <div class="max-h-56 overflow-y-auto p-1">
+          <label class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700">
+            <input type="checkbox" name="variant" value="{{ no_variant_option }}" :checked="variants.includes('{{ no_variant_option }}')" @change="variants.includes('{{ no_variant_option }}') ? variants = variants.filter(v => v !== '{{ no_variant_option }}') : variants.push('{{ no_variant_option }}')"
+                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40 dark:border-slate-500 dark:bg-slate-900">
+            <span class="italic text-slate-500 dark:text-slate-400">(no variant)</span>
+          </label>
+          <template x-for="v in allVariants.filter(v => !q || v.toLowerCase().includes(q.toLowerCase()))" :key="v">
+            <label class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-700">
+              <input type="checkbox" name="variant" :value="v" :checked="variants.includes(v)" @change="variants.includes(v) ? variants = variants.filter(x => x !== v) : variants.push(v)"
+                     class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/40 dark:border-slate-500 dark:bg-slate-900">
+              <span x-text="v"></span>
+            </label>
+          </template>
+          <div x-show="!allVariants.length" class="px-2 py-1.5 text-sm text-slate-400 dark:text-slate-500">No variants yet.</div>
+        </div>
+      </div>
+      <select multiple name="variant" x-model="variants" class="sr-only" aria-hidden="true">
+        <template x-for="v in variants" :key="'hidden-' + v"><option :value="v" selected></option></template>
+      </select>
+    </div>
+
+    {# Tri-state draft filter: segmented control with any / draft / final.
+       A segmented control reads faster than a native <select> when the value
+       is part of a tight filter bar; clicking the active value clears it. #}
+    <div class="flex flex-col gap-1 lg:col-span-3">
+      <span class="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Draft</span>
+      <div role="group" class="inline-flex rounded-lg border border-slate-200 p-0.5 dark:border-slate-600">
+        <button type="button" @click="draft = ''"
+                :class="draft === '' ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700'"
+                class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition">Any</button>
+        <button type="button" @click="setDraft('draft')"
+                :class="draft === 'draft' ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700'"
+                class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition">Drafts</button>
+        <button type="button" @click="setDraft('final')"
+                :class="draft === 'final' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300' : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-700'"
+                class="flex-1 rounded-md px-2 py-1.5 text-xs font-medium transition">Finals</button>
+      </div>
+      <input type="hidden" name="draft" :value="draft">
+    </div>
+  </div>
+
+  <div class="mt-3 flex flex-wrap items-center justify-between gap-2">
+    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+      <span x-show="hasFilters" x-cloak>
+        Active:
+        <span x-show="q" class="mr-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+          <span>“</span><span x-text="q"></span><span>”</span>
+          <button type="button" @click="q = ''" class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">✕</button>
+        </span>
+        <template x-for="v in variants" :key="'chip-' + v">
+          <span class="mr-1 inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300">
+            <span x-text="v === '{{ no_variant_option }}' ? '(no variant)' : v"></span>
+            <button type="button" @click="variants = variants.filter(x => x !== v)" class="text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-200">✕</button>
+          </span>
+        </template>
+        <span x-show="draft" class="mr-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-200">
+          <span x-text="draftLabel(draft)"></span>
+          <button type="button" @click="draft = ''" class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">✕</button>
+        </span>
+      </span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button type="button" x-show="hasFilters" x-cloak @click="clear()" class="text-xs text-indigo-600 hover:underline dark:text-indigo-400">Clear filters</button>
+    </div>
+  </div>
+
+  {# Submit button doubles as the non-JS fallback: clicking it (or pressing
+     Enter) fires the form's native submit, which HTMX intercepts and turns
+     into a ``search`` trigger anyway. #}
+  <noscript>
+    <button type="submit" class="mt-3 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700">Apply</button>
+  </noscript>
+</form>
+
+<div id="results-loading" class="htmx-indicator mb-2 text-center text-xs text-slate-400">Loading…</div>
+
+<div id="strings-result">
+  {% include "partials/_results.html" %}
+</div>
+
+{% endblock %}
