@@ -25,7 +25,7 @@ Two flavours of every helper, two contracts:
 
 import logging
 from collections.abc import Callable
-from datetime import date, datetime, time
+from datetime import date, datetime, time, tzinfo
 from decimal import Decimal
 from typing import Any
 
@@ -34,8 +34,22 @@ from babel.numbers import format_decimal
 
 from .locale import get_current_locale
 from .registry import get_translation_manager
+from .timezone import get_current_timezone, resolve_timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_tz(tz: tzinfo | str | None) -> tzinfo | None:
+    """
+    Pick the effective timezone for a single call.
+
+    Explicit values (``tzinfo`` instance or IANA name) win over the context
+    one; ``None`` falls back to the active timezone, which itself may be
+    ``None`` to let Babel use the process local zone.
+    """
+    if tz is None:
+        return get_current_timezone()
+    return resolve_timezone(tz)
 
 
 # --- Eager: t() returns a str subclass carrying the translated text ---
@@ -129,18 +143,28 @@ def t_date(value: date | datetime, format: str = "medium", locale: str | None = 
     return format_date(value, format=format, locale=locale or get_current_locale())
 
 
-def t_time(value: time | datetime, format: str = "short", locale: str | None = None) -> str:  # noqa: A002  # pylint: disable=redefined-builtin
+def t_time(value: time | datetime, format: str = "short", locale: str | None = None, tz: tzinfo | str | None = None) -> str:  # noqa: A002  # pylint: disable=redefined-builtin
     """
     Format a time eagerly, returning a real ``str``.
+
+    ``tz`` is applied to ``datetime`` values (a naive ``time`` is shown as-is,
+    since ``time`` has no date to project onto a zone). When omitted, the
+    timezone active at call time is used; pass an explicit value to override.
     """
-    return format_time(value, format=format, locale=locale or get_current_locale())
+    resolved_tz = _resolve_tz(tz)
+    return format_time(value, format=format, locale=locale or get_current_locale(), tzinfo=resolved_tz)
 
 
-def t_datetime(value: datetime, format: str = "medium", locale: str | None = None) -> str:  # noqa: A002  # pylint: disable=redefined-builtin
+def t_datetime(value: datetime, format: str = "medium", locale: str | None = None, tz: tzinfo | str | None = None) -> str:  # noqa: A002  # pylint: disable=redefined-builtin
     """
     Format a datetime eagerly, returning a real ``str``.
+
+    ``tz`` is the zone the datetime is projected onto before formatting. When
+    omitted, the timezone active at call time is used; pass an explicit value
+    to override.
     """
-    return format_datetime(value, format=format, locale=locale or get_current_locale())
+    resolved_tz = _resolve_tz(tz)
+    return format_datetime(value, format=format, locale=locale or get_current_locale(), tzinfo=resolved_tz)
 
 
 # --- Lazy helpers ------------------------------------------------------
@@ -440,11 +464,11 @@ class LazyDate:
 class LazyTime:
     """A string-like wrapper that defers time formatting until rendered."""
 
-    __slots__ = ("_value", "_format", "_locale")
+    __slots__ = ("_value", "_format", "_locale", "_tz")
 
-    def __init__(self, value: time | datetime, *, format: str = "short", locale: str | None = None) -> None:  # noqa: A002  # pylint: disable=redefined-builtin
+    def __init__(self, value: time | datetime, *, format: str = "short", locale: str | None = None, tz: tzinfo | str | None = None) -> None:  # noqa: A002  # pylint: disable=redefined-builtin
         """
-        Capture the value, format spec and optional explicit locale override.
+        Capture the value, format spec, optional explicit locale override and optional explicit timezone override.
 
         Args:
             value: The time (or datetime) to format.
@@ -452,16 +476,20 @@ class LazyTime:
                 Babel pattern.
             locale: Optional locale override; defaults to the active locale
                 at resolve time.
+            tz: Optional timezone override (``tzinfo`` or IANA name); applied
+                to ``datetime`` values only (a naive ``time`` is shown as-is).
+                Defaults to the active timezone at resolve time.
         """
         self._value = value
         self._format = format
         self._locale = locale
+        self._tz = tz
 
     def resolve(self) -> str:
         """
-        Format the time against the active locale.
+        Format the time against the active locale and timezone.
         """
-        return format_time(self._value, format=self._format, locale=self._locale or get_current_locale())
+        return format_time(self._value, format=self._format, locale=self._locale or get_current_locale(), tzinfo=_resolve_tz(self._tz))
 
     def __str__(self) -> str:
         return self.resolve()
@@ -502,11 +530,11 @@ class LazyTime:
 class LazyDateTime:
     """A string-like wrapper that defers datetime formatting until rendered."""
 
-    __slots__ = ("_value", "_format", "_locale")
+    __slots__ = ("_value", "_format", "_locale", "_tz")
 
-    def __init__(self, value: datetime, *, format: str = "medium", locale: str | None = None) -> None:  # noqa: A002  # pylint: disable=redefined-builtin
+    def __init__(self, value: datetime, *, format: str = "medium", locale: str | None = None, tz: tzinfo | str | None = None) -> None:  # noqa: A002  # pylint: disable=redefined-builtin
         """
-        Capture the value, format spec and optional explicit locale override.
+        Capture the value, format spec, optional explicit locale override and optional explicit timezone override.
 
         Args:
             value: The datetime to format.
@@ -514,16 +542,20 @@ class LazyDateTime:
                 Babel pattern.
             locale: Optional locale override; defaults to the active locale
                 at resolve time.
+            tz: Optional timezone override (``tzinfo`` or IANA name) used to
+                project the datetime before formatting. Defaults to the
+                active timezone at resolve time.
         """
         self._value = value
         self._format = format
         self._locale = locale
+        self._tz = tz
 
     def resolve(self) -> str:
         """
-        Format the datetime against the active locale.
+        Format the datetime against the active locale and timezone.
         """
-        return format_datetime(self._value, format=self._format, locale=self._locale or get_current_locale())
+        return format_datetime(self._value, format=self._format, locale=self._locale or get_current_locale(), tzinfo=_resolve_tz(self._tz))
 
     def __str__(self) -> str:
         return self.resolve()
@@ -581,21 +613,21 @@ def lazy_t_date(value: date | datetime, format: str = "medium", locale: str | No
     return LazyDate(value, format=format, locale=locale)
 
 
-def lazy_t_time(value: time | datetime, format: str = "short", locale: str | None = None) -> LazyTime:  # noqa: A002  # pylint: disable=redefined-builtin
+def lazy_t_time(value: time | datetime, format: str = "short", locale: str | None = None, tz: tzinfo | str | None = None) -> LazyTime:  # noqa: A002  # pylint: disable=redefined-builtin
     """
     Format a time lazily.
 
     Returns a string-like wrapper that formats the value against the
-    locale active when the value is read.
+    locale and timezone active when the value is read.
     """
-    return LazyTime(value, format=format, locale=locale)
+    return LazyTime(value, format=format, locale=locale, tz=tz)
 
 
-def lazy_t_datetime(value: datetime, format: str = "medium", locale: str | None = None) -> LazyDateTime:  # noqa: A002  # pylint: disable=redefined-builtin
+def lazy_t_datetime(value: datetime, format: str = "medium", locale: str | None = None, tz: tzinfo | str | None = None) -> LazyDateTime:  # noqa: A002  # pylint: disable=redefined-builtin
     """
     Format a datetime lazily.
 
     Returns a string-like wrapper that formats the value against the
-    locale active when the value is read.
+    locale and timezone active when the value is read.
     """
-    return LazyDateTime(value, format=format, locale=locale)
+    return LazyDateTime(value, format=format, locale=locale, tz=tz)

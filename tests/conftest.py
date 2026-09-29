@@ -9,22 +9,28 @@ from fastapi_simple_i18n.locale import current_locale, set_current_locale, set_d
 from fastapi_simple_i18n.manager import TranslationManager
 from fastapi_simple_i18n.models import TranslationEntry
 from fastapi_simple_i18n.registry import set_translation_manager
+from fastapi_simple_i18n.timezone import current_timezone, set_default_timezone
 
 
 @pytest.fixture(autouse=True)
 def reset_global_state():
     """
-    Reset the process-wide manager, default locale, and current locale.
+    Reset the process-wide manager, default locale, current locale, and
+    default timezone.
 
     Runs before and after every test so tests do not leak state into each other.
     """
     registry._current_manager = None  # noqa: SLF001  # pylint: disable=protected-access
     set_default_locale("en")
+    set_default_timezone(None)
     current_locale.set("")
+    current_timezone.set(None)
     yield
     registry._current_manager = None  # noqa: SLF001  # pylint: disable=protected-access
     set_default_locale("en")
+    set_default_timezone(None)
     current_locale.set("")
+    current_timezone.set(None)
 
 
 @pytest.fixture(name="sample_entries")

@@ -31,7 +31,9 @@
     <ul>
         <li>{{ t_number(total) }}</li>
         <li>{{ t_date(today) }}</li>
-        <li>{{ t_datetime(moment) }}</li>
+        {# ``t_datetime`` honors the active timezone (the one picked by the
+           middleware's ``timezone_resolver``, ``UTC`` by default). #}
+        <li>{{ t_datetime(moment) }} ({{ timezone }})</li>
     </ul>
 </body>
 </html>
