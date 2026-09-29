@@ -25,8 +25,19 @@ The system revolves around three ideas:
   needed.
 * Each other locale has a JSON file of entries mapping `key` (plus optional
   `variant`) to a translated `value`.
-* At runtime, `t("...")` returns a `LazyTranslation`. It resolves to a string
-  only when converted with `str()`, reading whatever locale is active then.
+* At runtime, `t("...")` returns a `TranslatableStr`, a `str` subclass
+  carrying the translated text. The lookup happens against the locale that is
+  active at call time, so the result is a real `str` and works in any string
+  context (`json.dumps`, Pydantic str fields, `urllib.parse.quote`, `| tojson`,
+  concatenation) with no `str()` wrapper. `lazy_t(...)` is the lazy counterpart:
+  it returns a `LazyTranslatableStr` (NOT a `str` subclass) that defers the
+  lookup until render, so the same captured value can render in different
+  locales at different times — at the cost of needing an explicit `str()`
+  wrapper at string-protocol boundaries. In Jinja templates the lazy variant
+  works out of the box because `install_translation_support` registers
+  `lazy_t` / `lazy_t_number` / `lazy_t_date` / `lazy_t_time` / `lazy_t_datetime`
+  and Jinja's default `finalize` already calls `str()` on every output value,
+  so `{{ lazy_t("Key") }}` renders correctly without any wrapper.
 
 Continue with [Getting started](getting-started.md).
 

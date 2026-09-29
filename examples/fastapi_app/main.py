@@ -67,12 +67,12 @@ async def index() -> JSONResponse:
     return JSONResponse(
         {
             "locale": get_current_locale(),
-            "welcome": str(t("Welcome to the example app")),
-            "hello": str(t("Hello, {name}!", name="Ada")),
-            "yes": str(t("Yes")),
-            "archive_verb": str(t("Archive", _variant="verb")),
-            "archive_noun": str(t("Archive", _variant="noun")),
-            "my_items_draft": str(t("My items")),
+            "welcome": t("Welcome to the example app"),
+            "hello": t("Hello, {name}!", name="Ada"),
+            "yes": t("Yes"),
+            "archive_verb": t("Archive", _variant="verb"),
+            "archive_noun": t("Archive", _variant="noun"),
+            "my_items_draft": t("My items"),
         },
     )
 
@@ -85,7 +85,7 @@ async def cart(items: int = 1) -> JSONResponse:
     return JSONResponse(
         {
             "locale": get_current_locale(),
-            "summary": str(t("There are {item_count} items in your cart", item_count=items)),
+            "summary": t("There are {item_count} items in your cart", item_count=items),
             "count": t_number(items),
         },
     )

@@ -95,6 +95,7 @@ extend-select = ["I"]
 ignore = [
     "D100",   # missing docstring in public module (covered by file-level """)
     "D104",   # missing docstring in public package
+    "D105",   # magic methods: their protocol is the documentation
     "D200",   # one-line docstrings: we use """ on its own line by convention
     "D203",   # conflicts with D211
     "D212",   # we use """ on own line, not same-line start

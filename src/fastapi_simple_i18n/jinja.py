@@ -32,12 +32,21 @@ try:
     from jinja2.ext import GETTEXT_FUNCTIONS, InternationalizationExtension
     from jinja2.runtime import Context
 except ImportError as exc:  # pragma: no cover - depends on the install extras
-    raise ImportError(
-        "Jinja2 support requires Jinja. Install the optional extra with "
-        "'pip install fastapi-simple-i18n[jinja]' (or add 'jinja2' to your project)."
-    ) from exc
+    raise ImportError("Jinja2 support requires Jinja. Install the optional extra with 'pip install fastapi-simple-i18n[jinja]' (or add 'jinja2' to your project).") from exc
 
-from .helpers import LazyTranslation, t, t_date, t_datetime, t_number, t_time
+from .helpers import (
+    TranslatableStr,
+    lazy_t,
+    lazy_t_date,
+    lazy_t_datetime,
+    lazy_t_number,
+    lazy_t_time,
+    t,
+    t_date,
+    t_datetime,
+    t_number,
+    t_time,
+)
 from .locale import get_current_locale
 from .models import ExtractedKey
 from .modules import DEFAULT_TEMPLATE_SUFFIXES, has_suffix
@@ -66,6 +75,14 @@ FORMATTERS: dict[str, Callable[..., str]] = {
     "t_datetime": t_datetime,
 }
 
+# The lazy formatters are always registered under their canonical names too.
+LAZY_FORMATTERS: dict[str, Callable[..., object]] = {
+    "lazy_t_number": lazy_t_number,
+    "lazy_t_date": lazy_t_date,
+    "lazy_t_time": lazy_t_time,
+    "lazy_t_datetime": lazy_t_datetime,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class JinjaConfig:
@@ -73,13 +90,22 @@ class JinjaConfig:
     The names under which the translation helpers are installed.
 
     Attributes:
-        function_names: Names of the global translation function. ``t("Key")``.
-        filter_names: Names of the translation filter. ``"Key" | t()``.
+        function_names: Names of the global eager translation function.
+            ``t("Key")``. Returns a real ``str`` resolved at call time.
+        filter_names: Names of the eager translation filter. ``"Key" | t``.
+        lazy_function_names: Names of the global lazy translation function.
+            ``lazy_t("Key")``. Returns a :class:`LazyTranslatableStr` that
+            resolves at render time via Jinja's default ``finalize`` (which
+            calls ``str()`` on the output value, so no ``| string`` wrapper
+            is needed inside ``{{ }}``).
+        lazy_filter_names: Names of the lazy translation filter. ``"Key" | lazy_t``.
         trans_blocks: Whether ``{% trans %}`` blocks are served by this library.
     """
 
     function_names: tuple[str, ...] = (DEFAULT_FUNCTION_NAME,)
     filter_names: tuple[str, ...] = (DEFAULT_FILTER_NAME,)
+    lazy_function_names: tuple[str, ...] = ("lazy_" + DEFAULT_FUNCTION_NAME,)
+    lazy_filter_names: tuple[str, ...] = ("lazy_" + DEFAULT_FILTER_NAME,)
     trans_blocks: bool = True
 
 
@@ -140,9 +166,9 @@ def _with_variant_alias(params: dict[str, object]) -> dict[str, object]:
 # and cached templates stay correct. The global ``t()`` happens to survive
 # folding, but both roles share this callable so they cannot drift apart.
 @pass_context
-def template_translate(context: Context, value: str, *args: object, **params: object) -> LazyTranslation:
+def template_translate(context: Context, value: str, *args: object, **params: object) -> TranslatableStr:
     """
-    Return a lazy translation for a key given as the value or the first argument.
+    Return an eager translation for a key given as the value or the first argument.
 
     The first positional argument selects the variant and the keyword arguments
     are format parameters, exactly as in :func:`~fastapi_simple_i18n.helpers.t`.
@@ -150,6 +176,33 @@ def template_translate(context: Context, value: str, *args: object, **params: ob
     if len(args) > 1:
         raise TypeError("A template translation takes at most one positional argument (the variant)")
     return t(value, *args, **_with_variant_alias(params))
+
+
+# Same shape as :func:`template_translate`, but returns a lazy wrapper. Jinja's
+# default ``finalize`` (which calls ``str()`` on every output value) resolves
+# the lazy object at render time, so ``{{ lazy_t("Key") }}`` and
+# ``{{ "Key" | lazy_t }}`` work in templates without any wrapper. The same
+# ``@pass_context`` rationale as ``template_translate`` applies: a filter call
+# with literal arguments would otherwise be constant-folded at compile time.
+@pass_context
+def template_lazy_translate(context: Context, value: str, *args: object, **params: object) -> object:
+    """
+    Return a lazy translation for a key given as the value or the first argument.
+
+    The first positional argument selects the variant and the keyword arguments
+    are format parameters, exactly as in :func:`~fastapi_simple_i18n.helpers.lazy_t`.
+
+    The returned :class:`~fastapi_simple_i18n.helpers.LazyTranslatableStr` is
+    NOT a ``str`` subclass — but Jinja's default render pipeline calls ``str()``
+    on every output value (``env.finalize`` defaults to :func:`str`), so
+    ``{{ lazy_t("Key") }}`` renders correctly without any wrapper. Only
+    boundaries that bypass Jinja's output stage (``json.dumps`` inside
+    ``| tojson``, Pydantic ``str`` fields, ``urllib.parse.quote``) still
+    need an explicit ``str()`` at the call site.
+    """
+    if len(args) > 1:
+        raise TypeError("A template translation takes at most one positional argument (the variant)")
+    return lazy_t(value, *args, **_with_variant_alias(params))
 
 
 def _resolve(message: str, variant: str | None = None) -> str:
@@ -187,10 +240,7 @@ def _make_gettext_callables() -> tuple[Callable[..., str], Callable[..., str], C
         """
         Fail with an actionable message: pluralization is not supported.
         """
-        raise NotImplementedError(
-            "Pluralization is not supported. Use one key per form with the variant argument instead, "
-            "for example t('There are {n} items', _variant='plural')."
-        )
+        raise NotImplementedError("Pluralization is not supported. Use one key per form with the variant argument instead, for example t('There are {n} items', _variant='plural').")
 
     return gettext, ngettext, pgettext
 
@@ -200,6 +250,8 @@ def install_translation_support(
     *,
     function_name: str | Sequence[str] | None = None,
     filter_name: str | Sequence[str] | None = None,
+    lazy_function_name: str | Sequence[str] | None = None,
+    lazy_filter_name: str | Sequence[str] | None = None,
     trans_blocks: bool = True,
 ) -> Environment:
     """
@@ -210,13 +262,33 @@ def install_translation_support(
     be configurable. It is safe to call more than once, and it returns the
     environment so it can be chained.
 
+    The installer registers two flavours of the translation function and
+    formatter, plus the ``trans`` block:
+
+    * Eager (``t`` / ``t_number`` / ``t_date`` / ``t_time`` / ``t_datetime``):
+      resolve at call time against the active locale and return a real ``str``.
+      Works inside ``{{ }}`` without any wrapper.
+    * Lazy (``lazy_t`` / ``lazy_t_number`` / ``lazy_t_date`` / ``lazy_t_time``
+      / ``lazy_t_datetime``): return a string-like wrapper that resolves at
+      render time. Jinja's default ``finalize`` already calls ``str()`` on
+      every output value, so ``{{ lazy_t("Key") }}`` and
+      ``{{ lazy_t_number(1234.5) }}`` work inside ``{{ }}`` without any
+      wrapper. The same output, fed to ``| tojson`` or any other boundary
+      that goes through the C-level ``str`` protocol (``json.dumps``,
+      ``urllib.parse.quote``, Pydantic str fields), still needs an explicit
+      ``str()`` — use ``{{ lazy_t("Key") | string | tojson }}`` there.
+
     Args:
         environment: The environment to install into. Usually
             ``Jinja2Templates(...).env`` with FastAPI or Starlette.
-        function_name: Name, or names, for the global translation function.
+        function_name: Name, or names, for the global eager translation
+            function. Defaults to ``"t"``.
+        filter_name: Name, or names, for the eager translation filter.
             Defaults to ``"t"``.
-        filter_name: Name, or names, for the translation filter. Defaults to
-            ``"t"``.
+        lazy_function_name: Name, or names, for the global lazy translation
+            function. Defaults to ``"lazy_t"``.
+        lazy_filter_name: Name, or names, for the lazy translation filter.
+            Defaults to ``"lazy_t"``.
         trans_blocks: Whether to serve ``{% trans %}`` blocks from this
             library. Enabling it loads ``jinja2.ext.i18n`` and replaces its
             ``gettext``, ``ngettext`` and ``pgettext`` globals; pass ``False``
@@ -230,6 +302,8 @@ def install_translation_support(
     config = JinjaConfig(
         function_names=_as_names(function_name, defaults.function_names),
         filter_names=_as_names(filter_name, defaults.filter_names),
+        lazy_function_names=_as_names(lazy_function_name, defaults.lazy_function_names),
+        lazy_filter_names=_as_names(lazy_filter_name, defaults.lazy_filter_names),
         trans_blocks=trans_blocks,
     )
 
@@ -239,6 +313,13 @@ def install_translation_support(
         environment.globals.setdefault(name, formatter)
     for name in config.filter_names:
         environment.filters[name] = template_translate
+
+    for name in config.lazy_function_names:
+        environment.globals[name] = template_lazy_translate
+    for name, formatter in LAZY_FORMATTERS.items():
+        environment.globals.setdefault(name, formatter)
+    for name in config.lazy_filter_names:
+        environment.filters[name] = template_lazy_translate
 
     if config.trans_blocks:
         environment.add_extension(InternationalizationExtension)

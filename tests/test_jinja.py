@@ -206,6 +206,77 @@ def test_formatters_are_registered(manager):
     assert environment.from_string("{{ t_number(1234.5) }}").render() == "1\u202f234,5"
 
 
+def test_lazy_t_global_resolves_at_render_time(env):
+    """
+    ``{{ lazy_t("Key") }}`` resolves at render time without a ``| string`` wrapper.
+
+    Jinja's default render pipeline calls ``str()`` on every output value
+    (the default ``finalize``), so the lazy wrapper's ``__str__`` is invoked
+    at render time and produces the translated text.
+    """
+    template = env.from_string('{{ lazy_t("Hello, {name}!", name="Ada") }}')
+
+    set_current_locale("fr")
+    assert template.render() == "Bonjour, Ada !"
+    set_current_locale("en")
+    assert template.render() == "Hello, Ada!"
+
+
+def test_lazy_t_filter_resolves_at_render_time(env):
+    """
+    The lazy filter form reads the locale at render time too.
+    """
+    template = env.from_string('{{ "Hello, {name}!" | lazy_t(name="Ada") }}')
+
+    set_current_locale("fr")
+    assert template.render() == "Bonjour, Ada !"
+    set_current_locale("en")
+    assert template.render() == "Hello, Ada!"
+
+
+def test_lazy_t_variants_in_templates(env):
+    """
+    The lazy template helper honours the ``variant=`` keyword alias.
+    """
+    set_current_locale("fr")
+    assert env.from_string('{{ "Archive" | lazy_t(variant="verb") }}').render() == "Archiver"
+    assert env.from_string('{{ "Archive" | lazy_t(variant="noun") }}').render() == "Archive"
+
+
+def test_lazy_formatters_are_registered(manager):
+    """
+    The lazy number and date helpers are available to templates.
+    """
+    build_manager(manager)
+    environment = build_default_environment()
+    set_current_locale("fr")
+    # No | string needed because Jinja's finalize calls str() on the output.
+    assert environment.from_string("{{ lazy_t_number(1234.5) }}").render() == "1\u202f234,5"
+
+
+def test_lazy_t_needs_str_at_tojson_boundary(env):
+    """
+    ``| tojson`` bypasses Jinja's finalize, so the lazy value still needs
+    ``str()`` at that boundary.
+
+    This documents the one place the ``| string`` wrapper is still required:
+    anywhere that hands the value to a consumer which reads the C-level
+    str buffer directly (``json.dumps``, Pydantic str fields,
+    ``urllib.parse.quote``). The renderer output itself IS a real str,
+    so json.dumps on the rendered string works.
+    """
+    import json
+
+    from fastapi_simple_i18n.helpers import lazy_t
+
+    set_current_locale("fr")
+    rendered = env.from_string('{{ lazy_t("Hello, {name}!", name="Ada") }}').render()
+    assert json.dumps(rendered) == '"Bonjour, Ada !"'
+
+    with pytest.raises(TypeError, match="JSON serializable"):
+        json.dumps(lazy_t("Hello, {name}!", name="Ada"))
+
+
 def test_autoescape_escapes_the_resolved_value(env):
     """
     With autoescape on, the value and the translation are both escaped.

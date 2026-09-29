@@ -23,7 +23,7 @@ src/fastapi_simple_i18n/
     locale.py              # current_locale ContextVar + get/set/reset + as_locale + default locale
     manager.py             # TranslationManager (registration + resolution)
     registry.py            # process-wide active manager (module global, NOT a ContextVar)
-    helpers.py             # LazyTranslation + t / t_number / t_date / t_time / t_datetime
+    helpers.py             # TranslatableStr + LazyTranslatableStr + t/lazy_t and formatters
     negotiation.py         # parse_accept_language, negotiate_locale
     middleware.py          # TranslationMiddleware (pure ASGI)
     jinja.py               # Jinja2 runtime helpers + template extraction (optional 'jinja' extra)
@@ -50,9 +50,16 @@ docs/                      # MkDocs site
   endpoint in a separate context, so a ContextVar-stored manager set during
   middleware construction was not visible to endpoints on later requests. Only
   the **locale** is per-request (a `ContextVar` in `locale.py`).
-* `t()` returns a `LazyTranslation`, never a `str`. It resolves at `str()` time,
-  reading the locale active *then*. This is what makes module-level constants
-  and template usage work.
+* `t()` returns a `TranslatableStr`, a `str` subclass carrying the translated
+  text. The lookup happens at call time, against the locale active *then*;
+  the result is a real `str` so it works anywhere a string is expected
+  (`json.dumps`, Pydantic str fields, `quote()`, concatenation, `| tojson` in
+  Jinja) with no `str()` wrapper. `lazy_t()` returns a `LazyTranslatableStr`
+  (NOT a `str` subclass) that defers the lookup until render — use it when
+  the value is captured at a point where the locale is not yet known
+  (module-level constants, decorators that run before the request) and the
+  locale may change later; wrap with `str()` at JSON / Pydantic / `| tojson`
+  boundaries.
 * The unique unit of a translation is the pair `(key, variant)`.
 * Resolution: built-in locale returns the key verbatim (variant ignored);
   otherwise look up `(key, variant)`; drafts are used as-is; missing keys fall
@@ -154,7 +161,7 @@ is just `babel`. Because `extract_translations.py` must keep working without
 Jinja2, it imports `jinja.py` on demand with `importlib`, and only when a module
 actually declares template directories, instead of with a top-level import.
 
-Current status: ruff clean, isort clean, pylint 10.00/10, 133 tests passing (40 in
+Current status: ruff clean, isort clean, pylint 10.00/10, 151 tests passing (43 in
 `tests/test_web.py` for the web UI), with no warnings.
 
 Note: `registry.py` and `locale.py` each carry one intentional module-level
