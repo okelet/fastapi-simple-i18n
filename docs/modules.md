@@ -37,6 +37,12 @@ translations/
     fr.json
 ```
 
+A file name is a locale tag, and any spelling of one is accepted (`es`,
+`es-ES`, `es_ES`, `ES-es`), because the file name is resolved through the same
+entry point as everything else. A file that is *not* named after a locale is
+refused with an error naming it, rather than registered as a locale the library
+cannot resolve.
+
 ## Registering a module
 
 Register a module on the fly with the manager. This loads every locale file it
@@ -59,7 +65,7 @@ manager.register_translation(SomeLibraryTranslation)
 `BaseModuleTranslation` provides convenience classmethods:
 
 * `discover_locales()` — returns the sorted locale codes found in the translation
-  directory (the JSON file stems).
+  directory (the JSON file stems), as written on disk.
 * `get_translation_file(locale)` — returns the path to a locale's JSON file.
 
 These are also what the extraction script uses to find and update files.

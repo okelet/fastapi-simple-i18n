@@ -14,6 +14,12 @@ list. Every entry has a `key` and a `value`, plus two optional fields:
 }
 ```
 
+The file name is the locale, and any spelling of a locale tag is accepted
+(`es`, `es-ES`, `es_ES`, `ES-es`) because the file name is resolved the same way
+as every other locale. The name is kept as written on disk — it is what a
+translator sees — while the manager keys the file by the resolved locale, so a
+`pt-BR.json` is served to a client that asked for `pt_BR`.
+
 ## Fields
 
 * `key` — the source string used in the code, written in the built-in language.

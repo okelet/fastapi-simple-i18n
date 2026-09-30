@@ -4,6 +4,8 @@ Tests for BaseModuleTranslation and manager.register_translation.
 
 from pathlib import Path
 
+from babel.core import Locale
+
 from fastapi_simple_i18n.manager import TranslationManager
 from fastapi_simple_i18n.models import TranslationEntry, dump_translation_file
 from fastapi_simple_i18n.modules import DEFAULT_TEMPLATE_SUFFIXES, BaseModuleTranslation, has_suffix
@@ -98,7 +100,7 @@ def test_register_translation_loads_all_locales(tmp_path: Path):
     manager.register_translation(module)
     assert manager.translate("Yes", locale="es") == "Sí"
     assert manager.translate("Yes", locale="fr") == "Oui"
-    assert manager.supported_locales() == {"en", "es", "fr"}
+    assert manager.supported_locales() == {Locale("en"), Locale("es"), Locale("fr")}
 
 
 def test_register_translation_skips_builtin(tmp_path: Path):

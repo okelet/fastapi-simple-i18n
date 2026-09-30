@@ -5,10 +5,10 @@ Context for AI agents (and humans) working on `fastapi-simple-i18n`.
 ## What this project is
 
 A small internationalization library for FastAPI apps and CLI scripts. It
-provides translations with variants and drafts, lazy translations, a locale
-`ContextVar`, `Accept-Language` negotiation middleware, Babel-powered
-number/date/time formatting, a registrable module system, and an AST-based
-extraction script.
+provides translations with variants and drafts, eager and lazy translations,
+locale and timezone `ContextVar`s, `Accept-Language` negotiation middleware,
+Babel-powered number/amount/date/time formatting, a registrable module system,
+and an AST-based extraction script.
 
 The public GitHub URL is `https://github.com/okelet/fastapi-simple-i18n`. The
 importable package is `fastapi_simple_i18n`.
@@ -20,7 +20,8 @@ src/fastapi_simple_i18n/
     __init__.py            # empty (no re-exports); import from submodules
     models.py              # TranslationEntry, TranslationFile, Translation, dump_translation_file, ExtractedKey
     modules.py             # BaseModuleTranslation (ABC)
-    locale.py              # current_locale ContextVar + get/set/reset + as_locale + default locale
+    locale.py              # resolve_locale + current_locale ContextVar + get/set/reset + as_locale + default locale
+    timezone.py            # resolve_timezone + current_timezone ContextVar + get/set/reset + as_timezone + UTC default
     manager.py             # TranslationManager (registration + resolution)
     registry.py            # process-wide active manager (module global, NOT a ContextVar)
     helpers.py             # TranslatableStr + LazyTranslatableStr + t/lazy_t and formatters
@@ -49,7 +50,38 @@ docs/                      # MkDocs site
   `ContextVar`. This is deliberate: Starlette's `BaseHTTPMiddleware` runs the
   endpoint in a separate context, so a ContextVar-stored manager set during
   middleware construction was not visible to endpoints on later requests. Only
-  the **locale** is per-request (a `ContextVar` in `locale.py`).
+  the **locale** and the **timezone** are per-request (`ContextVar`s in
+  `locale.py` and `timezone.py`).
+* **Locales are `babel.core.Locale` objects**, not strings, and there is no
+  library-specific locale class or exception. `resolve_locale(locale)` is the
+  single entry point: it accepts a `Locale` (returned as-is) or a tag in any
+  spelling (`es`, `es_ES`, `es-ES`, `ES-es`, `zh_Hans_CN`, `en_US_POSIX`, with
+  surrounding blanks), and raises `ValueError` for an empty value, a tag mixing
+  `_` and `-`, a malformed tag, or an unknown one. Every setter
+  (`set_default_locale`, `set_current_locale`, `TranslationManager.builtin_locale`)
+  and every locale-taking helper validates on the way in, so a typo fails where
+  it is written. `get_current_locale()` never returns `None`. Consequences to
+  keep in mind: `Locale == "es"` is `False` (compare with another `Locale`), and
+  `json.dumps(Locale)` fails, so JSON payloads need `str(get_current_locale())`.
+* **There is always a timezone.** `timezone.py` mirrors `locale.py` exactly:
+  `resolve_timezone(tzinfo | str) -> tzinfo` is the single entry point, every
+  setter validates, and `get_current_timezone()` never returns `None`. The
+  process-wide default starts at `DEFAULT_TIMEZONE` (`ZoneInfo("UTC")`, resolved
+  through `resolve_timezone` so it is identical to what a caller passing
+  `"UTC"` gets) and cannot be unset. `None` is refused by `set_current_timezone`,
+  `set_default_timezone` and `as_timezone` alike — a moment rendered in the
+  process local zone is a moment whose wall clock depends on where the server
+  runs, which is the thing this removes. The one `None` left in the module is
+  the `ContextVar`'s own "not resolved in this context" marker; it is what makes
+  `reset_current_timezone` and the middleware's per-request reset work, and it is
+  never visible through a getter. A formatter's `tz=` argument keeps `None` as
+  its default, where it means "the active one" (there is no longer a "none" to
+  express), and an explicit value is validated when it is used.
+* The **manager keys translations by the resolved `Locale`**, and
+  `supported_locales()` returns `set[Locale]`. Babel's `Locale.__eq__` compares
+  subtags, so all spellings of a locale collapse onto one entry. The *file* name
+  on disk is kept as written, because that is the name a translator sees in git
+  and in the web UI.
 * `t()` returns a `TranslatableStr`, a `str` subclass carrying the translated
   text. The lookup happens at call time, against the locale active *then*;
   the result is a real `str` so it works anywhere a string is expected
@@ -66,6 +98,14 @@ docs/                      # MkDocs site
   back to the key and log a warning.
 * Placeholders use `str.format` (`{name}`), not ICU MessageFormat. No
   pluralization beyond what `format` provides.
+* `t_money(value, currency)` formats an amount with its currency symbol and
+  `t_amount(value)` the same amount without one (for sums that mix currencies);
+  both default to `MONEY_FORMAT = "#,##0.00"`, unlike `t_number`'s
+  `"#,##0.###"`. A blank or unrecognised currency code degrades to a plain
+  localized decimal and logs a warning, so a mistyped code never breaks a
+  rendered page. There is no locale fallback in these helpers: locales are
+  validated at every entry point, so the only thing that can fail is the
+  currency.
 * The JSON file format is `{"translations": [ {key, value, variant?, draft?} ]}`.
   `dump_translation_file` omits `variant`/`draft` when unset.
 * Templates are served by `jinja.py` through a plain installer function rather
@@ -91,6 +131,18 @@ docs/                      # MkDocs site
   what covers wrapper helpers and aliased imports. `run()` prints the names it
   used, so a name that does not match shows up instead of silently extracting
   nothing.
+* The installer also registers two read-only context globals,
+  `get_current_locale` (a `babel.core.Locale`) and `get_current_tz` (a
+  `tzinfo`, never `None`), from `CONTEXT_HELPERS`, so a template does not need
+  the locale or the timezone threaded through its render context. They go in
+  with `environment.globals.setdefault`, so an application that defines its own
+  global of that name keeps it. Note that `{{ get_current_locale() }}` renders
+  the Babel identifier (`es_ES`), while `<html lang=...>` wants
+  `{{ get_current_locale().language }}`.
+* Negotiation matches on the resolved locale too: a candidate matches a
+  supported locale exactly, or its base language when a supported locale *is*
+  that bare language. So `es-MX` never lands on a supported `es_ES`, while
+  `es-MX` with a supported `es` does.
 * Template files are matched by `has_suffix()` in `modules.py`, which tests the
   whole file name with `str.endswith`, **not** `pathlib.Path.suffix`. That is
   what makes compound suffixes such as `.html.j2` and `.j2.html` work;
@@ -107,8 +159,13 @@ Python:
   absolute imports.
 * Docstrings on every module, class, function, and inner function, with the
   triple quotes on their own lines.
-* Top-level imports only.
+* Top-level imports only, in `src`, `tests` and `examples` alike.
 * Line length 320 (ruff/pylint/isort).
+* pytest fixtures shadowing an outer name (`translations_dir`, `app`,
+  `client` in `tests/test_web.py`) are declared with an explicit
+  `@pytest.fixture(name="...")` on a `*_fixture`-suffixed function, so pylint
+  does not report `redefined-outer-name` and the name inside the function
+  matches the one tests request.
 
 Markdown:
 
@@ -129,7 +186,7 @@ Run the checks with `uv run` (it resolves and syncs the environment from
 ```bash
 uv run ruff check src tests examples
 uv run isort --check-only src tests examples
-uv run pylint src/fastapi_simple_i18n
+uv run pylint src/fastapi_simple_i18n tests
 uv run pytest
 ```
 
@@ -161,19 +218,26 @@ is just `babel`. Because `extract_translations.py` must keep working without
 Jinja2, it imports `jinja.py` on demand with `importlib`, and only when a module
 actually declares template directories, instead of with a top-level import.
 
-Current status: ruff clean, isort clean, pylint 10.00/10, 151 tests passing (43 in
-`tests/test_web.py` for the web UI), with no warnings.
+Current status: ruff clean, isort clean, pylint 10.00/10 over `src` and
+`tests`, 274 tests passing (44 in `tests/test_web.py` for the web UI), with no
+warnings.
 
-Note: `registry.py` and `locale.py` each carry one intentional module-level
-mutable global (`_current_manager`, `_default_locale`) with a
-`# pylint: disable=invalid-name` comment. Do not "fix" these into UPPER_CASE;
-they are reassigned at runtime.
+Note: `registry.py`, `locale.py` and `timezone.py` each carry one intentional
+module-level mutable global (`_current_manager`, `_default_locale`,
+`_default_timezone`) with a `# pylint: disable=invalid-name` comment. Do not
+"fix" these into UPPER_CASE; they are reassigned at runtime.
+`timezone.DEFAULT_TIMEZONE` is the opposite case: it *is* `UPPER_CASE`, because
+it is a constant, and it is resolved through `resolve_timezone` at import so it
+is the same object a caller passing `"UTC"` gets.
 
 ## Manual checks that exercise the whole system
 
 ```bash
 # FastAPI example
 uv run --group examples python -c "from starlette.testclient import TestClient; from examples.fastapi_app.main import app; c=TestClient(app); print(c.get('/', headers={'Accept-Language':'es'}).json()); print(c.get('/?lang=fr').json())"
+
+# Number / money / date / time formatting, with and without an explicit timezone
+uv run --group examples python -c "from starlette.testclient import TestClient; from examples.fastapi_app.main import app; c=TestClient(app); [print(loc, c.get('/formats', headers={'Accept-Language': loc}).json()) for loc in ('es','en')]"
 
 # Jinja template route of the FastAPI example (one line per locale, order matters:
 # the first request compiles the template, later ones reuse the cached compilation)
@@ -194,13 +258,12 @@ uv run python -m fastapi_simple_i18n.extract_translations examples.fastapi_app.i
 # example's i18n.py has no wrapper, so only the t() key is expected here.
 uv run python -m fastapi_simple_i18n.extract_translations examples.fastapi_app.i18n:AppTranslation --python-function tr --python-function t --dry-run
 
+# Translation web UI
+uv run --group web python -c "from starlette.testclient import TestClient; from fastapi_simple_i18n.web.app import create_app; from fastapi_simple_i18n.web.config import Settings; app=create_app(Settings(translations_dir='examples/fastapi_app/translations')); c=TestClient(app); print(c.get('/').status_code, c.get('/locales/es').status_code, c.get('/healthz').json())"
+
 # Docs (preview / build)
 uv run --group docs mkdocs serve
 uv run --group docs mkdocs build --strict
-```
-
-# Translation web UI
-uv run --group web python -c "from starlette.testclient import TestClient; from fastapi_simple_i18n.web.app import create_app; from fastapi_simple_i18n.web.config import Settings; app=create_app(Settings(translations_dir='examples/fastapi_app/translations')); c=TestClient(app); print(c.get('/').status_code, c.get('/locales/es').status_code, c.get('/healthz').json())"
 ```
 
 ## Translation web UI
@@ -235,6 +298,10 @@ target so a crash mid-save never leaves a truncated JSON behind.
   `list_locales`, `load_catalog`, `filter_rows`, `paginate`, `placeholder_issues`,
   `collect_variants`, `flag_emoji`, `locale_display_name`, `locale_path`. The
   latter is the path-traversal guard (a regex; no dot, no separator, no NUL).
+  `locale_display_name` and `flag_emoji` go through the library's
+  `resolve_locale`, so an `es_ES.json` file gets the same display name and flag
+  as an `es-ES.json` one, and a stem that is not a locale at all is shown
+  as-is instead of blowing up the page.
 * `web/storage.py` — write side. `load_entries`, `create_entry`, `update_entry`,
   `delete_entry`, `write_entries`. Mutations are pure (return a new list) and
   the persist step is atomic.

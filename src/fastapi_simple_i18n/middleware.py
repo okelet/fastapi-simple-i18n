@@ -39,17 +39,17 @@ except ImportError as exc:  # pragma: no cover - depends on the install extras
         "'pip install fastapi-simple-i18n[fastapi]' (or add 'starlette' to your project)."
     ) from exc
 
-from .locale import current_locale, set_current_locale, set_default_locale
+from .locale import Locale, current_locale, resolve_locale, set_current_locale, set_default_locale
 from .manager import TranslationManager
 from .negotiation import negotiate_locale
 from .registry import set_translation_manager
-from .timezone import current_timezone, resolve_timezone, set_current_timezone, set_default_timezone
+from .timezone import DEFAULT_TIMEZONE, current_timezone, resolve_timezone, set_current_timezone, set_default_timezone
 
 # A resolver is anything that takes a Request and returns either a value or an
 # awaitable resolving to one (or ``None``). The middleware awaits the result
 # transparently so callers can pass either a regular function or an ``async``
 # one.
-LocaleResolver = Callable[[Request], str | None | Awaitable[str | None]]
+LocaleResolver = Callable[[Request], str | Locale | None | Awaitable[str | Locale | None]]
 TimezoneResolver = Callable[[Request], tzinfo | str | None | Awaitable[tzinfo | str | None]]
 
 
@@ -73,12 +73,15 @@ class TranslationMiddleware:
         app: The wrapped ASGI application.
         manager: The translation manager to activate for the process.
         default_locale: Locale used when the request locale cannot be resolved
-            from the request itself.
+            from the request itself. Accepts any spelling of a locale tag
+            (``"en"``, ``"en-US"``, ``"en_US"``, ``"EN-us"``).
         builtin_locale: The built-in locale (the language the source strings are
             written in). This is applied to the manager. Defaults to ``"en"``.
         default_timezone: Timezone used when no ``timezone_resolver`` is
-            configured, or when it returns ``None``. Defaults to ``None``,
-            which lets the date/time helpers use the process local zone.
+            configured, or when it returns ``None``. Accepts a ``tzinfo`` or an
+            IANA name. Defaults to ``"UTC"``, the same default the rest of the
+            library uses, so a datetime is never rendered in the process local
+            zone by accident.
         locale_resolver: Optional callable (``sync`` or ``async``) invoked with
             the incoming :class:`~starlette.requests.Request`. A non-``None``
             return value is used as the request locale, skipping
@@ -90,6 +93,12 @@ class TranslationMiddleware:
             the request timezone via
             :func:`~fastapi_simple_i18n.timezone.set_current_timezone`.
             ``None`` leaves the timezone at the default.
+
+    Raises:
+        ValueError: If ``default_locale``, ``builtin_locale`` or a locale
+            returned by ``locale_resolver`` is not a valid locale tag, or if
+            ``default_timezone`` or a value returned by ``timezone_resolver``
+            is not a usable timezone.
 
     Behavior:
 
@@ -114,25 +123,33 @@ class TranslationMiddleware:
         self,
         app: ASGIApp,
         manager: TranslationManager,
-        default_locale: str = "en",
-        builtin_locale: str = "en",
-        default_timezone: tzinfo | str | None = None,
+        default_locale: str | Locale = "en",
+        builtin_locale: str | Locale = "en",
+        default_timezone: tzinfo | str = DEFAULT_TIMEZONE,
         locale_resolver: LocaleResolver | None = None,
         timezone_resolver: TimezoneResolver | None = None,
     ) -> None:
         """
         Configure the middleware and register the manager globally.
+
+        Raises:
+            ValueError: If a locale argument is not a valid locale tag, or if
+                ``default_timezone`` is not a usable timezone.
+            TypeError: If ``default_timezone`` is neither a ``tzinfo`` nor a
+                string.
+            ZoneInfoNotFoundError: If ``default_timezone`` is an IANA name that
+                the database does not know.
         """
         self.app = app
         self.manager = manager
-        self.default_locale = default_locale
-        self.default_timezone = default_timezone
+        self.default_locale = resolve_locale(default_locale)
+        self.default_timezone = resolve_timezone(default_timezone)
         self.locale_resolver = locale_resolver
         self.timezone_resolver = timezone_resolver
         self.manager.builtin_locale = builtin_locale
         set_translation_manager(manager)
-        set_default_locale(default_locale)
-        set_default_timezone(default_timezone)
+        set_default_locale(self.default_locale)
+        set_default_timezone(self.default_timezone)
 
     async def __call__(
         self,
@@ -148,7 +165,7 @@ class TranslationMiddleware:
             return
 
         # Discard any value inherited from an earlier request.
-        current_locale.set("")
+        current_locale.set(None)
         current_timezone.set(None)
 
         request = Request(scope, receive)
@@ -157,7 +174,7 @@ class TranslationMiddleware:
         #   1. ``locale_resolver`` (if it returns a non-None locale).
         #   2. ``Accept-Language`` header negotiated against supported locales.
         #   3. ``default_locale``.
-        resolved_locale: str | None = None
+        resolved_locale: str | Locale | None = None
         if self.locale_resolver is not None:
             resolved_locale = await _maybe_await(self.locale_resolver(request))
         if resolved_locale is None:
@@ -171,7 +188,9 @@ class TranslationMiddleware:
 
         # Timezone resolution: a non-None return value from the resolver wins;
         # the default timezone (set at construction time) is otherwise left in
-        # place via ``get_current_timezone`` falling back to it.
+        # place via ``get_current_timezone`` falling back to it. Either way
+        # ``get_current_timezone`` answers with a real ``tzinfo``, so nothing
+        # downstream has to handle a missing zone.
         if self.timezone_resolver is not None:
             resolved_timezone = await _maybe_await(self.timezone_resolver(request))
             if resolved_timezone is not None:

@@ -14,8 +14,11 @@ Three things become available in templates:
 * ``{% trans %}...{% endtrans %}`` blocks, served by this library's manager
   instead of gettext catalogs. An optional context (``{% trans "verb" %}...``)
   maps to the library's variant. Pluralization is not supported.
-* ``t_number``, ``t_date``, ``t_time`` and ``t_datetime`` for locale-aware
-  formatting.
+* ``t_number``, ``t_money``, ``t_amount``, ``t_date``, ``t_time`` and
+  ``t_datetime`` for locale-aware formatting.
+* ``get_current_locale()`` and ``get_current_tz()``, the request context as
+  the template sees it — handy for ``<html lang="{{ get_current_locale().language }}">``
+  or a rendered timestamp.
 
 This is the only module that depends on Jinja2, which ships as the optional
 ``jinja`` extra (``pip install fastapi-simple-i18n[jinja]``).
@@ -37,13 +40,17 @@ except ImportError as exc:  # pragma: no cover - depends on the install extras
 from .helpers import (
     TranslatableStr,
     lazy_t,
+    lazy_t_amount,
     lazy_t_date,
     lazy_t_datetime,
+    lazy_t_money,
     lazy_t_number,
     lazy_t_time,
     t,
+    t_amount,
     t_date,
     t_datetime,
+    t_money,
     t_number,
     t_time,
 )
@@ -51,6 +58,7 @@ from .locale import get_current_locale
 from .models import ExtractedKey
 from .modules import DEFAULT_TEMPLATE_SUFFIXES, has_suffix
 from .registry import get_translation_manager
+from .timezone import get_current_timezone
 
 # Attribute under which the configuration is stored on an environment. The
 # extraction script reads it from the same environment the application renders
@@ -70,6 +78,8 @@ VARIANT_KEYWORDS = ("_variant", "variant")
 # The formatting helpers are always registered under their canonical names.
 FORMATTERS: dict[str, Callable[..., str]] = {
     "t_number": t_number,
+    "t_amount": t_amount,
+    "t_money": t_money,
     "t_date": t_date,
     "t_time": t_time,
     "t_datetime": t_datetime,
@@ -78,9 +88,20 @@ FORMATTERS: dict[str, Callable[..., str]] = {
 # The lazy formatters are always registered under their canonical names too.
 LAZY_FORMATTERS: dict[str, Callable[..., object]] = {
     "lazy_t_number": lazy_t_number,
+    "lazy_t_amount": lazy_t_amount,
+    "lazy_t_money": lazy_t_money,
     "lazy_t_date": lazy_t_date,
     "lazy_t_time": lazy_t_time,
     "lazy_t_datetime": lazy_t_datetime,
+}
+
+# Read-only accessors for the request context, registered under fixed names.
+# They are always installed (with ``setdefault``) so a template can rely on
+# them without the application having to configure anything, and so an
+# application that already defines a global with one of these names keeps it.
+CONTEXT_HELPERS: dict[str, Callable[[], object]] = {
+    "get_current_locale": get_current_locale,
+    "get_current_tz": get_current_timezone,
 }
 
 
@@ -278,6 +299,14 @@ def install_translation_support(
       ``urllib.parse.quote``, Pydantic str fields), still needs an explicit
       ``str()`` — use ``{{ lazy_t("Key") | string | tojson }}`` there.
 
+    It also installs two fixed, non-configurable globals (see
+    :data:`CONTEXT_HELPERS`): ``get_current_locale()``, returning the
+    :class:`babel.core.Locale` of the request, and ``get_current_tz()``,
+    returning its :class:`~datetime.tzinfo`. Neither is ever ``None``, so a
+    template can render ``{{ get_current_tz() }}`` without a guard.
+    Neither name is taken from the arguments, and an environment that already
+    defines a global with one of those names keeps its own.
+
     Args:
         environment: The environment to install into. Usually
             ``Jinja2Templates(...).env`` with FastAPI or Starlette.
@@ -320,6 +349,9 @@ def install_translation_support(
         environment.globals.setdefault(name, formatter)
     for name in config.lazy_filter_names:
         environment.filters[name] = template_lazy_translate
+
+    for name, helper in CONTEXT_HELPERS.items():
+        environment.globals.setdefault(name, helper)
 
     if config.trans_blocks:
         environment.add_extension(InternationalizationExtension)

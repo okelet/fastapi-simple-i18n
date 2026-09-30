@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .locale import Locale, resolve_locale
+
 logger = logging.getLogger(__name__)
 
 # Keys allowed in a single translation entry object in the JSON file.
@@ -143,17 +145,25 @@ class Translation:
     Entries are indexed by their ``(key, variant)`` pair so lookups are O(1).
     A ``Translation`` is typically produced by :meth:`from_file` but can also
     be constructed manually (useful for tests or CLI scripts).
+
+    The locale is stored as a validated :class:`babel.core.Locale`, so a
+    translation registered as ``"pt-BR"`` is found again through ``"pt_BR"``,
+    ``"pt-br"`` or ``"PT_br"``.
     """
 
-    def __init__(self, locale: str, entries: list[TranslationEntry] | None = None) -> None:
+    def __init__(self, locale: str | Locale, entries: list[TranslationEntry] | None = None) -> None:
         """
         Initialize the translation store for a locale.
 
         Args:
             locale: The locale code this translation belongs to (e.g. ``"es"``).
+                Resolved to a :class:`babel.core.Locale`.
             entries: Optional initial list of entries to index.
+
+        Raises:
+            ValueError: If ``locale`` is not a valid locale tag.
         """
-        self.locale = locale
+        self.locale = resolve_locale(locale)
         self._entries: dict[tuple[str, str | None], TranslationEntry] = {}
         for entry in entries or []:
             self.add(entry)
@@ -188,7 +198,7 @@ class Translation:
         return len(self._entries)
 
     @classmethod
-    def from_file(cls, locale: str, path: Path) -> Translation:
+    def from_file(cls, locale: str | Locale, path: Path) -> Translation:
         """
         Build a ``Translation`` by loading and validating a locale JSON file.
 
@@ -196,8 +206,13 @@ class Translation:
         not exist or cannot be parsed.
 
         Args:
-            locale: The locale code the file corresponds to.
+            locale: The locale code the file corresponds to. ``path`` is used
+                as given, so a file named after the tag as spelled on disk
+                (``pt-BR.json``) loads into ``pt_BR``.
             path: Path to the locale JSON file.
+
+        Raises:
+            ValueError: If ``locale`` is not a valid locale tag.
         """
         if not path.is_file():
             logger.warning("Translation file not found: %s", path)
@@ -211,9 +226,12 @@ class Translation:
         return cls(locale, data.translations)
 
     @classmethod
-    def from_entries(cls, locale: str, entries: list[TranslationEntry]) -> Translation:
+    def from_entries(cls, locale: str | Locale, entries: list[TranslationEntry]) -> Translation:
         """
         Build a ``Translation`` directly from a list of entries.
+
+        Raises:
+            ValueError: If ``locale`` is not a valid locale tag.
         """
         return cls(locale, entries)
 

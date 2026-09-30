@@ -19,9 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from babel import Locale
-from babel.core import UnknownLocaleError as BabelUnknownLocaleError
-
+from ..locale import resolve_locale
 from ..models import TranslationEntry, TranslationFile, TranslationFormatError
 
 logger = logging.getLogger(__name__)
@@ -98,12 +96,14 @@ def locale_display_name(locale: str) -> str:
     """
     Return the name of a locale written in that locale (``"es"`` -> ``"español"``).
 
-    Falls back to the raw name when Babel cannot parse it, since a file stem is
-    not required to be a well-formed language tag.
+    Resolved through the library's own :func:`~fastapi_simple_i18n.locale.resolve_locale`,
+    so a file named after any spelling of a locale (``pt_BR``, ``pt-BR``) gets a
+    display name. The raw name is returned when it is not a locale at all, since
+    a file stem is not required to be a well-formed language tag.
     """
     try:
-        parsed = Locale.parse(locale, sep="-")
-    except (ValueError, TypeError, BabelUnknownLocaleError):
+        parsed = resolve_locale(locale)
+    except ValueError:
         return locale
     return parsed.get_display_name(parsed) or locale
 
@@ -113,11 +113,12 @@ def flag_emoji(locale: str) -> str:
     Return the flag emoji for the region of a locale, or an empty string.
 
     Regional-indicator symbols encode a country as two code points; locales
-    without a territory (or with a numeric one) have no flag to show.
+    without a territory (or with a numeric one) have no flag to show, and so
+    does a name that is not a locale at all.
     """
     try:
-        territory = Locale.parse(locale, sep="-").territory or ""
-    except (ValueError, TypeError, BabelUnknownLocaleError):
+        territory = resolve_locale(locale).territory or ""
+    except ValueError:
         return ""
     if len(territory) != 2 or not territory.isalpha():
         return ""

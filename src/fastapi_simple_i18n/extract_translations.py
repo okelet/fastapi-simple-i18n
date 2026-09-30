@@ -20,6 +20,10 @@ updates each locale JSON file in the module's translation directory:
 
 Locales are auto-detected from the JSON files already present in the module's
 translation directory, plus any extra locale codes passed on the command line.
+Every one of them is resolved to a :class:`babel.core.Locale`, so any spelling
+works (``es``, ``es-ES``, ``es_ES``) and an unusable one is reported before
+anything is written; the file itself is created under the spelling that was
+used.
 
 Usage::
 
@@ -41,6 +45,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+from .locale import Locale, resolve_locale
 from .models import ExtractedKey, Translation, TranslationEntry, dump_translation_file
 from .modules import BaseModuleTranslation, has_suffix
 
@@ -388,6 +393,36 @@ def resolve_module(reference: str) -> type[BaseModuleTranslation]:
     return obj
 
 
+def _locales_to_update(module: type[BaseModuleTranslation], extra_locales: list[str]) -> list[tuple[str, Locale]]:
+    """
+    Collect the locales to update, as ``(file stem, resolved locale)`` pairs.
+
+    The file stem is kept as spelled on disk (or as typed on the command line)
+    because that is the name of the file to write, while the resolved locale is
+    what the rest of the library keys on. Two spellings of the same locale
+    (``es`` and ``es-ES``) are collapsed into one entry, the first spelling
+    winning, so a file is never written twice under two names.
+
+    Args:
+        module: The module translation class being extracted.
+        extra_locales: Locale codes given on the command line.
+
+    Returns:
+        The pairs, sorted by locale.
+
+    Raises:
+        SystemExit: If one of the locales is not a valid locale tag.
+    """
+    resolved: dict[Locale, str] = {}
+    for stem in (*module.discover_locales(), *extra_locales):
+        try:
+            locale = resolve_locale(stem)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        resolved.setdefault(locale, stem)
+    return sorted(((stem, locale) for locale, stem in resolved.items()), key=lambda pair: str(pair[1]))
+
+
 def run(
     reference: str,
     extra_locales: list[str],
@@ -402,13 +437,18 @@ def run(
 
     Args:
         reference: Dotted reference to the module translation class.
-        extra_locales: Additional locale codes to create/update.
+        extra_locales: Additional locale codes to create/update. Any spelling of
+            a locale tag is accepted (``"es"``, ``"es-ES"``, ``"es_ES"``), and the
+            file is written under that spelling.
         prune: Whether to remove stale entries.
         dry_run: Whether to only report changes without writing files.
         python_functions: Names the translation function may be called by in
             Python sources. Replaces :data:`DEFAULT_FUNCTION_NAMES`.
         jinja_functions: Global function names to look for in templates.
         jinja_filters: Filter names to look for in templates.
+
+    Raises:
+        SystemExit: If a locale is not a valid locale tag.
     """
     module = resolve_module(reference)
 
@@ -436,14 +476,14 @@ def run(
         print("Nothing to extract and no existing locales. Done.")
         return
 
-    locales = sorted({*module.discover_locales(), *extra_locales})
+    locales = _locales_to_update(module, extra_locales)
     if not locales:
         print("No locales detected and none provided. Pass locale codes, e.g. 'es fr'.")
         return
 
-    print(f"\nUpdating {len(locales)} locale(s): {', '.join(locales)}")
-    for locale in locales:
-        path = module.get_translation_file(locale)
+    print(f"\nUpdating {len(locales)} locale(s): {', '.join(str(locale) for _, locale in locales)}")
+    for stem, locale in locales:
+        path = module.get_translation_file(stem)
         existing = Translation.from_file(locale, path) if path.is_file() else Translation(locale)
         entries, added, removed = merge_keys_into_translation(existing, keys, prune=prune)
 
@@ -456,10 +496,10 @@ def run(
             status.append("no changes")
 
         if dry_run:
-            print(f"  {locale}.json: would apply {', '.join(status)}")
+            print(f"  {stem}.json: would apply {', '.join(status)}")
         else:
             dump_translation_file(entries, path)
-            print(f"  {locale}.json: {', '.join(status)}")
+            print(f"  {stem}.json: {', '.join(status)}")
 
     print("\nDone.")
 

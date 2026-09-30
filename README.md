@@ -3,9 +3,9 @@
 Simple, module-friendly internationalization for FastAPI apps and CLI scripts.
 
 It provides a small translation system built around a `TranslationManager`,
-JSON translation files (with support for variants and drafts), lazy translation
-objects, a locale `ContextVar`, `Accept-Language` negotiation middleware, and
-Babel-powered number/date/time formatting.
+JSON translation files (with support for variants and drafts), eager and lazy
+translation objects, locale and timezone `ContextVar`s, `Accept-Language`
+negotiation middleware, and Babel-powered number/date/time/currency formatting.
 
 ## Features
 
@@ -13,17 +13,28 @@ Babel-powered number/date/time formatting.
 * A per-locale `Translation` object backed by a simple JSON file format.
 * Translation entries support an optional `variant` (to disambiguate identical
   keys) and a `draft` flag (used at runtime, marked for later review).
-* Lazy translations: `t()` returns an object that resolves to a string only
+* Every locale is a `babel.core.Locale`, accepted and validated in any spelling
+  (`es`, `es_ES`, `es-ES`, `ES-es`), so how a locale is written never decides
+  whether a translation is found.
+* Eager translations: `t()` returns a `str` subclass carrying the translated
+  text, so it works directly in a JSON response.
+* Lazy translations: `lazy_t()` returns an object that resolves to a string only
   when rendered, so the active locale is read at render time.
-* A locale `ContextVar` with `set_current_locale` / `get_current_locale`.
+* A locale `ContextVar` with `set_current_locale` / `get_current_locale`, and a
+  matching timezone one that is never absent: it starts at `UTC` and
+  `get_current_timezone()` always returns a real `tzinfo`, so a naive datetime
+  is never read in the server's local zone by accident.
 * FastAPI/Starlette middleware that negotiates the locale from the
-  `Accept-Language` header, with configurable default and built-in locales.
-* Babel helpers: `t_number`, `t_date`, `t_time`, `t_datetime`.
+  `Accept-Language` header, with configurable default and built-in locales, and
+  resolves a per-request timezone.
+* Babel helpers: `t_number`, `t_money`, `t_amount`, `t_date`, `t_time`,
+  `t_datetime`, each with a lazy counterpart.
 * Registrable translation modules via `BaseModuleTranslation`.
 * An AST-based extraction script that finds `t("...")` calls and updates locale
   files, marking new strings as drafts and preserving existing translations.
-* Jinja2 templates: `t()`, a `t` filter and `{% trans %}` blocks resolve against
-  the same catalog, with configurable names.
+* Jinja2 templates: `t()`, a `t` filter, `{% trans %}` blocks and the
+  `get_current_locale()` / `get_current_tz()` globals resolve against the same
+  catalog, with configurable names.
 * A translation file web UI (FastAPI + HTMX + Alpine) that browses and edits
   the locale JSON files directly, ships in the `web` dependency group.
 * Works in CLI scripts by configuring the manager and locale manually.
@@ -79,10 +90,14 @@ app.add_middleware(
 @app.get("/")
 async def index() -> dict[str, str]:
     return {
-        "locale": get_current_locale(),
-        "greeting": str(t("Hello, {name}!", name="Ada")),
+        "locale": str(get_current_locale()),
+        "greeting": t("Hello, {name}!", name="Ada"),
     }
 ```
+
+`get_current_locale()` returns a `babel.core.Locale`, so it is not a `str`:
+`str(...)` it where the response needs a string, and read `locale.language` or
+`locale.territory` where a subtag is what you want.
 
 ## Quick start (CLI)
 
@@ -163,6 +178,7 @@ install_translation_support(templates.env)  # names are configurable
 <p>{{ "Archive" | t(variant="verb") }}</p>
 <p>{% trans %}Signed in{% endtrans %}</p>
 <p>{% trans "noun" %}Archive{% endtrans %}</p>
+<html lang="{{ get_current_locale().language }}">
 ```
 
 Point your module's `get_template_dirs()` at the templates and the extraction
@@ -238,7 +254,7 @@ manual install step is needed:
 ```bash
 uv run ruff check src tests examples
 uv run isort --check-only src tests examples
-uv run pylint src/fastapi_simple_i18n
+uv run pylint src/fastapi_simple_i18n tests
 uv run pytest
 ```
 

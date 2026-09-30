@@ -31,8 +31,14 @@ one compiled template serves every locale.
 * `t("Key")`, the global translation function, and `"Key" | t`, the filter. Both
   take the variant and the format parameters.
 * `{% trans %}...{% endtrans %}` blocks, and `{{ gettext("Key") }}`.
-* `t_number`, `t_date`, `t_time` and `t_datetime`, the same formatters the Python
-  helpers provide.
+* `t_number`, `t_money`, `t_amount`, `t_date`, `t_time` and `t_datetime`, the same
+  formatters the Python helpers provide.
+* The lazy forms: `lazy_t("Key")` / `"Key" | lazy_t`, `lazy_t_number`,
+  `lazy_t_money`, `lazy_t_amount`, `lazy_t_date`, `lazy_t_time` and
+  `lazy_t_datetime`. They resolve when the template renders, which inside
+  `{{ }}` means the locale of the request being rendered.
+* `get_current_locale()` and `get_current_tz()`, the request context as the
+  template sees it.
 
 ```html
 <h1>{{ t("Welcome to the example app") }}</h1>
@@ -43,12 +49,50 @@ one compiled template serves every locale.
 
 <p>{% trans %}Signed in{% endtrans %}</p>
 
-<p>{{ t_number(total) }} &mdash; {{ t_date(today) }}</p>
+<p>{{ t_number(total) }} &mdash; {{ t_money(total, "EUR") }} &mdash; {{ t_date(today) }}</p>
 ```
 
 The variant can be given as `_variant=`, which is what the Python `t()` takes, or
 as `variant=`, which reads better in a template. Both work in the function and
 in the filter, and `_variant=` wins if you pass both.
+
+There is no need to wrap a lazy value in `str()` here: Jinja's default
+`finalize` already calls `str()` on whatever a `{{ }}` outputs, so
+`{{ lazy_t("Key") }}` and `{{ lazy_t_number(total) }}` render correctly. Inside a
+`{% trans %}` block, or through `| tojson`, wrap it yourself.
+
+## The request context in a template
+
+Two globals expose the request context, so a template does not need the locale
+or the timezone threaded through its render context:
+
+```html
+<html lang="{{ get_current_locale().language }}">
+```
+
+`get_current_locale()` returns a [`babel.core.Locale`](https://babel.pocoo.org/en/latest/api/core.html#babel.core.Locale),
+so any subtag or display name is reachable from it:
+
+```html
+<html lang="{{ get_current_locale().language }}">
+<meta name="description" content="{{ get_current_locale().get_display_name() }}">
+<span>{{ get_current_locale().territory or "—" }}</span>
+```
+
+`{{ get_current_locale() }}` on its own renders the full identifier
+(`es_ES`), which is what a `lang` attribute does *not* want: a region is a
+`territory`, not a language.
+
+`get_current_tz()` returns the active `tzinfo`. It is never `None` — the library
+always has one in effect, `UTC` until something is configured — so a template
+can render it without a guard:
+
+```html
+<p>{{ t_datetime(moment) }} ({{ get_current_tz() }})</p>
+```
+
+Both names are installed only if the environment does not already define them,
+so an application that wants its own `get_current_locale` global keeps it.
 
 ## Renaming the helpers
 

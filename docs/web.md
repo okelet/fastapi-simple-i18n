@@ -28,7 +28,10 @@ Every setting is prefixed with `FSI_WEB_`:
 
 The locale name comes from the file stem (`es.json` → locale `es`); the
 filename pattern is validated against `^[A-Za-z0-9_-]+$`, so a crafted
-locale can never escape the directory.
+locale can never escape the directory. A stem that is a locale in any spelling
+(`es_ES`, `pt-BR`, `zh_Hans_CN`) still gets its localized display name and flag,
+because it is resolved through the same entry point as the rest of the library;
+a stem that is not a locale at all is shown as-is.
 
 ## Features
 

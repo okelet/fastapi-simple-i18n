@@ -5,6 +5,8 @@ Tests for the AST-based extraction script.
 import sys
 from pathlib import Path
 
+import pytest
+
 from fastapi_simple_i18n.extract_translations import (
     TemplateExtractor,
     build_template_extractor,
@@ -175,7 +177,7 @@ def test_merge_prunes_stale():
     With prune, entries missing from source are removed.
     """
     existing = Translation("es", [TranslationEntry(key="Old", value="Viejo")])
-    entries, added, removed = merge_keys_into_translation(existing, {("New", None)}, prune=True)
+    entries, _added, removed = merge_keys_into_translation(existing, {("New", None)}, prune=True)
     keys = {(e.key, e.variant) for e in entries}
     assert ("Old", None) not in keys
     assert removed == 1
@@ -253,6 +255,73 @@ def test_resolve_module_and_run(tmp_path: Path, monkeypatch):
     assert es.get("Archive", "verb").draft is True
 
     # Clean up imported modules so other tests are unaffected.
+    for name in list(sys.modules):
+        if name.startswith("extract_pkg"):
+            del sys.modules[name]
+
+
+def test_run_writes_the_file_under_the_spelling_it_was_given(tmp_path: Path, monkeypatch):
+    """
+    A locale may be given in any spelling, and the file keeps that name.
+
+    The name on disk is what a translator sees in the UI and in git, so it is
+    preserved; the locale itself is resolved, so a later lookup finds it through
+    any other spelling.
+    """
+    reference = build_package(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = resolve_module(reference)
+
+    run(reference, extra_locales=["ES-es"], prune=False, dry_run=False)
+
+    path = module.get_translation_file("ES-es")
+    assert path.name == "ES-es.json"
+    assert Translation.from_file("es-es", path).get("Yes").draft is True
+    assert module.discover_locales() == ["ES-es"]
+
+    for name in list(sys.modules):
+        if name.startswith("extract_pkg"):
+            del sys.modules[name]
+
+
+def test_run_rejects_an_unusable_locale(tmp_path: Path, monkeypatch):
+    """
+    A locale that is not one is reported before anything is written.
+
+    The script is a batch tool, so a bad locale on the command line ends the
+    run with a clear message instead of creating a file nobody can serve.
+    """
+    reference = build_package(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = resolve_module(reference)
+
+    with pytest.raises(SystemExit, match="Invalid locale 'nope'"):
+        run(reference, extra_locales=["es", "nope"], prune=False, dry_run=False)
+
+    assert not module.get_translation_file("es").exists()
+
+    for name in list(sys.modules):
+        if name.startswith("extract_pkg"):
+            del sys.modules[name]
+
+
+def test_run_rejects_a_locale_file_named_after_something_else(tmp_path: Path, monkeypatch):
+    """
+    A file in the translation directory must be named after a locale.
+
+    A ``notes.json`` next to the locale files is a mistake (a backup, a
+    half-written file), and registering it would produce a locale the library
+    cannot resolve.
+    """
+    reference = build_package(tmp_path)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    module = resolve_module(reference)
+    module.get_translation_dir().mkdir(parents=True, exist_ok=True)
+    (module.get_translation_dir() / "notes.json").write_text('{"translations": []}', encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="Invalid locale 'notes'"):
+        run(reference, extra_locales=[], prune=False, dry_run=False)
+
     for name in list(sys.modules):
         if name.startswith("extract_pkg"):
             del sys.modules[name]

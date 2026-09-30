@@ -26,7 +26,7 @@ from datetime import date, datetime
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from fastapi_simple_i18n.helpers import t, t_date, t_datetime, t_number, t_time
+from fastapi_simple_i18n.helpers import t, t_amount, t_date, t_datetime, t_money, t_number, t_time
 from fastapi_simple_i18n.locale import get_current_locale, set_current_locale
 from fastapi_simple_i18n.manager import TranslationManager
 from fastapi_simple_i18n.middleware import TranslationMiddleware
@@ -102,7 +102,7 @@ async def index() -> JSONResponse:
     """
     return JSONResponse(
         {
-            "locale": get_current_locale(),
+            "locale": str(get_current_locale()),
             "welcome": t("Welcome to the example app"),
             "hello": t("Hello, {name}!", name="Ada"),
             "yes": t("Yes"),
@@ -120,7 +120,7 @@ async def cart(items: int = 1) -> JSONResponse:
     """
     return JSONResponse(
         {
-            "locale": get_current_locale(),
+            "locale": str(get_current_locale()),
             "summary": t("There are {item_count} items in your cart", item_count=items),
             "count": t_number(items),
         },
@@ -136,14 +136,17 @@ async def formats() -> JSONResponse:
     timezone (picked by ``timezone_resolver`` from the ``?tz=`` query
     parameter, ``UTC`` by default) and against ``UTC`` explicitly, so the
     same naive instant can be compared across zones in a single response.
+    Amounts are shown with and without a currency symbol, so the two money
+    helpers can be compared side by side.
     """
     now = datetime(2026, 8, 30, 14, 30, 0)
-    current_tz = get_current_timezone()
     return JSONResponse(
         {
-            "locale": get_current_locale(),
-            "timezone": str(current_tz) if current_tz is not None else None,
+            "locale": str(get_current_locale()),
+            "timezone": str(get_current_timezone()),
             "number": t_number(1234567.89),
+            "money": t_money(1234567.89, "EUR"),
+            "amount": t_amount(1234567.89),
             "date": t_date(now.date()),
             "date_short": t_date(now.date(), format="short"),
             "time": t_time(now.time()),
@@ -160,15 +163,15 @@ async def time_route() -> JSONResponse:
     Render the same instant in three timezones.
 
     Demonstrates passing an explicit ``tz=`` to :func:`t_datetime` to override
-    the active timezone for a single call. The active timezone (``?tz=`` or
-    the default) is also included so the contrast is visible in the response.
+    the active timezone for a single call. The active timezone (``?tz=`` or the
+    default) is also included so the contrast is visible in the response; it is
+    always a real zone, so there is no ``None`` case to handle.
     """
     moment = datetime(2026, 8, 30, 14, 30, 0)
-    active = get_current_timezone()
     return JSONResponse(
         {
-            "locale": get_current_locale(),
-            "active_timezone": str(active) if active is not None else None,
+            "locale": str(get_current_locale()),
+            "active_timezone": str(get_current_timezone()),
             "as_utc": t_datetime(moment, tz="UTC"),
             "as_madrid": t_datetime(moment, tz="Europe/Madrid"),
             "as_tokyo": t_datetime(moment, tz="Asia/Tokyo"),
@@ -182,18 +185,17 @@ async def page(request: Request, name: str = "Ada", items: int = 3) -> HTMLRespo
     """
     Render a Jinja template with the same translations the JSON routes use.
 
-    The template calls ``t()``, the ``t`` filter and ``{% trans %}`` blocks. The
-    locale is negotiated by :class:`TranslationMiddleware` and read at render
-    time, so the same compiled template serves every locale. ``t_datetime`` is
-    also called so the active timezone (set by the ``?tz=`` resolver) shows up
-    in the rendered page.
+    The template calls ``t()``, the ``t`` filter and ``{% trans %}`` blocks, and
+    reads the request context itself through the ``get_current_locale()`` and
+    ``get_current_tz()`` globals, so neither the locale nor the timezone has to
+    be threaded through the context. The locale is negotiated by
+    :class:`TranslationMiddleware` and read at render time, so the same compiled
+    template serves every locale.
     """
     return templates.TemplateResponse(
         request,
         "page.html",
         {
-            "locale": get_current_locale(),
-            "timezone": str(get_current_timezone()) if get_current_timezone() is not None else "UTC",
             "who": name,
             "item_count": items,
             "total": 1234567.89,

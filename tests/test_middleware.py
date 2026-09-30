@@ -4,7 +4,7 @@ Tests for TranslationMiddleware end-to-end via a FastAPI test client.
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import pytest
 from fastapi import FastAPI, Request
@@ -16,7 +16,7 @@ from fastapi_simple_i18n.locale import get_current_locale, set_current_locale
 from fastapi_simple_i18n.manager import TranslationManager
 from fastapi_simple_i18n.middleware import TranslationMiddleware
 from fastapi_simple_i18n.models import TranslationEntry
-from fastapi_simple_i18n.timezone import get_current_timezone
+from fastapi_simple_i18n.timezone import DEFAULT_TIMEZONE, get_current_timezone, get_default_timezone, set_default_timezone
 
 
 @pytest.fixture(name="client")
@@ -47,7 +47,7 @@ def client_fixture() -> TestClient:
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     return TestClient(app)
 
@@ -121,7 +121,7 @@ def test_locale_forced_before_the_middleware_is_discarded():
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     client = TestClient(ForceLocaleASGI(app))
     resp = client.get("/", headers={"Accept-Language": "es"})
@@ -157,7 +157,7 @@ def test_locale_resolver_sync_overrides_header():
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     client = TestClient(app)
     assert client.get("/?lang=fr", headers={"Accept-Language": "es"}).json() == {"locale": "fr", "yes": "Oui"}
@@ -192,7 +192,7 @@ def test_locale_resolver_async_overrides_header():
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     client = TestClient(app)
     assert client.get("/", headers={"Accept-Language": "es", "x-lang": "es"}).json() == {"locale": "es", "yes": "Sí"}
@@ -226,7 +226,7 @@ def test_locale_resolver_returning_none_falls_back_to_header():
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     client = TestClient(app)
     assert client.get("/", headers={"Accept-Language": "es"}).json() == {"locale": "es", "yes": "Sí"}
@@ -234,8 +234,10 @@ def test_locale_resolver_returning_none_falls_back_to_header():
 
 def test_locale_resolver_does_not_skip_user_middleware_override():
     """
-    The resolver runs after the per-request reset, so a locale forced by user
-    middleware registered *after* ``TranslationMiddleware`` still wins.
+    The resolver runs after the per-request reset.
+
+    So a locale forced by user middleware registered *after*
+    ``TranslationMiddleware`` still wins.
     """
 
     def resolver(request: Request) -> str | None:
@@ -271,7 +273,7 @@ def test_locale_resolver_does_not_skip_user_middleware_override():
         """
         Return the resolved locale and a translated string.
         """
-        return JSONResponse({"locale": get_current_locale(), "yes": str(t("Yes"))})
+        return JSONResponse({"locale": str(get_current_locale()), "yes": str(t("Yes"))})
 
     client = TestClient(app)
     assert client.get("/").json() == {"locale": "fr", "yes": "Oui"}
@@ -387,6 +389,99 @@ def test_timezone_resolver_returning_none_uses_default():
     assert client.get("/").json() == {"timezone": "Europe/Madrid"}
 
 
+def test_default_timezone_defaults_to_utc():
+    """
+    Without an explicit ``default_timezone``, requests are handled in UTC.
+
+    Not the process local zone: a server's own clock has nothing to do with the
+    user a response is being written for.
+    """
+    manager = TranslationManager(builtin_locale="en")
+
+    app = FastAPI()
+    app.add_middleware(TranslationMiddleware, manager=manager)
+
+    @app.get("/")
+    async def index() -> JSONResponse:
+        """
+        Return the active timezone and how a naive datetime is read in it.
+        """
+        naive = datetime(2024, 1, 1, 12, 0, 0)
+        return JSONResponse(
+            {
+                "timezone": str(get_current_timezone()),
+                "rendered": t_datetime(naive, format="yyyy-MM-dd HH:mm"),
+            },
+        )
+
+    client = TestClient(app)
+    assert client.get("/").json() == {"timezone": "UTC", "rendered": "2024-01-01 12:00"}
+
+
+def test_default_timezone_is_applied_resolved():
+    """
+    The default timezone is resolved when the middleware is built.
+
+    Like the locales, so what ends up as the process default is a real
+    ``tzinfo`` rather than the name that was passed in.
+    """
+    manager = TranslationManager(builtin_locale="en")
+    app = FastAPI()
+    app.add_middleware(TranslationMiddleware, manager=manager, default_timezone="Europe/Madrid")
+    app.build_middleware_stack()
+    assert get_default_timezone() == ZoneInfo("Europe/Madrid")
+    set_default_timezone(DEFAULT_TIMEZONE)
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        pytest.param(None, TypeError, id="none"),
+        pytest.param("", ValueError, id="empty"),
+        pytest.param("   ", ValueError, id="blank"),
+        pytest.param(42, TypeError, id="not-a-timezone"),
+        pytest.param("Not/A_Real_Zone", ZoneInfoNotFoundError, id="unknown"),
+    ],
+)
+def test_default_timezone_is_validated(value, error):
+    """
+    A default timezone that is not one is reported when the stack is built.
+    """
+    manager = TranslationManager(builtin_locale="en")
+    app = FastAPI()
+    app.add_middleware(TranslationMiddleware, manager=manager, default_timezone=value)
+    with pytest.raises(error):
+        app.build_middleware_stack()
+
+
+def test_timezone_resolver_rejects_a_broken_name():
+    """
+    A resolver returning an unusable timezone fails the request where it happened.
+    """
+
+    def resolver(request: Request) -> str:
+        """
+        Return a name that is not a timezone.
+        """
+        return "Not/A_Real_Zone"
+
+    manager = TranslationManager(builtin_locale="en")
+
+    app = FastAPI()
+    app.add_middleware(TranslationMiddleware, manager=manager, timezone_resolver=resolver)
+
+    @app.get("/")
+    async def index() -> JSONResponse:
+        """
+        Never reached.
+        """
+        return JSONResponse({})  # pragma: no cover
+
+    client = TestClient(app, raise_server_exceptions=True)
+    with pytest.raises(ZoneInfoNotFoundError):
+        client.get("/")
+
+
 def test_timezone_resolver_accepts_tzinfo():
     """
     The resolver may return a ``tzinfo`` instance directly.
@@ -422,8 +517,9 @@ def test_timezone_resolver_accepts_tzinfo():
 
 def test_timezone_resolver_exception_propagates():
     """
-    An exception raised by the resolver propagates out of the middleware (and
-    surfaces as a 500 from FastAPI).
+    An exception raised by the resolver propagates out of the middleware.
+
+    It surfaces as a 500 from FastAPI.
     """
 
     def resolver(request: Request) -> str | None:  # noqa: ARG001
@@ -480,14 +576,16 @@ def test_timezone_does_not_leak_between_requests():
     @app.get("/")
     async def index() -> JSONResponse:
         """
-        Return the active timezone (``str(...)`` for ``ZoneInfo``; ``None``
-        when no override is in effect).
+        Return the active timezone.
+
+        ``str(...)`` for ``ZoneInfo``; there is no ``None`` to guard against,
+        since a timezone is always in effect.
         """
-        current = get_current_timezone()
-        return JSONResponse({"timezone": str(current) if current is not None else None})
+        return JSONResponse({"timezone": str(get_current_timezone())})
 
     client = TestClient(app)
     assert client.get("/?tz=Europe/Madrid").json() == {"timezone": "Europe/Madrid"}
-    # No ``?tz=`` on this request: the resolver returns ``None`` and the
-    # default timezone (``None``) is in effect — the helper sees no override.
-    assert client.get("/").json() == {"timezone": None}
+    # No ``?tz=`` on this request: the resolver returns ``None``, so the default
+    # timezone is in effect again — UTC here, because ``default_timezone``
+    # was not overridden.
+    assert client.get("/").json() == {"timezone": "UTC"}

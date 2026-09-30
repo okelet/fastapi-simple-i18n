@@ -5,6 +5,7 @@ Tests for the core models: TranslationEntry, Translation, file I/O.
 from pathlib import Path
 
 import pytest
+from babel.core import Locale
 
 from fastapi_simple_i18n.models import Translation, TranslationEntry, TranslationFile, TranslationFormatError, dump_translation_file
 
@@ -65,7 +66,7 @@ def test_from_file_roundtrip(tmp_path: Path):
 
 def test_dump_omits_default_fields(tmp_path: Path):
     """
-    variant and draft are omitted from the JSON when unset.
+    The variant and draft fields are omitted from the JSON when unset.
     """
     path = tmp_path / "es.json"
     dump_translation_file([TranslationEntry(key="Yes", value="Sí")], path)
@@ -114,3 +115,39 @@ def test_translation_file_rejects_non_object_top_level():
     """
     with pytest.raises(TranslationFormatError):
         TranslationFile.from_json("[]")
+
+
+# --- Locale handling ---
+
+
+def test_translation_locale_is_a_locale_object():
+    """
+    The locale is stored resolved, so it is usable as a key straight away.
+    """
+    translation = Translation("ES-es", [TranslationEntry(key="Yes", value="Sí")])
+    assert isinstance(translation.locale, Locale)
+    assert translation.locale == Locale("es", territory="ES")
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        pytest.param(Translation, id="Translation"),
+        pytest.param(lambda locale: Translation.from_entries(locale, []), id="from_entries"),
+        pytest.param(lambda locale: Translation.from_file(locale, Path("does_not_exist.json")), id="from_file"),
+    ],
+)
+def test_translation_validates_its_locale(factory):
+    """
+    A Translation is never built for a locale that does not exist.
+    """
+    with pytest.raises(ValueError, match="Invalid locale 'xx_YY'"):
+        factory("xx_YY")
+
+
+def test_translation_accepts_a_locale_object():
+    """
+    An already resolved locale is accepted as-is.
+    """
+    locale = Locale("pt", territory="BR")
+    assert Translation(locale).locale is locale

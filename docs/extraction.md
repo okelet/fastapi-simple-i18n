@@ -27,6 +27,24 @@ Locales are the union of:
 uv run python -m fastapi_simple_i18n.extract_translations myapp.i18n:AppTranslation es fr
 ```
 
+Any spelling of a locale is accepted (`es`, `es-ES`, `es_ES`, `ES-es`), and the
+file is created under the spelling you used, because that is the name a
+translator sees in git and in the web UI:
+
+```bash
+uv run python -m fastapi_simple_i18n.extract_translations myapp.i18n:AppTranslation es-ES
+# writes translations/es-ES.json
+```
+
+Two spellings of the same locale in one run (`es es-ES`) collapse into a single
+file, the first spelling winning. A locale that is not one ends the run with a
+message before anything is written, whether it came from the command line or
+from a file sitting in the translation directory:
+
+```text
+Invalid locale 'notes': unknown locale 'notes'
+```
+
 ## What it writes
 
 For each locale file:

@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from fastapi_simple_i18n.models import TranslationEntry, dump_translation_file
+from fastapi_simple_i18n.web.app import create_app
 from fastapi_simple_i18n.web.catalog import (
     EntriesPage,
     EntryFilter,
@@ -46,8 +47,8 @@ from fastapi_simple_i18n.web.storage import (
 # --- fixtures ---------------------------------------------------------------
 
 
-@pytest.fixture
-def translations_dir(tmp_path: Path) -> Path:
+@pytest.fixture(name="translations_dir")
+def translations_dir_fixture(tmp_path: Path) -> Path:
     """
     A directory with two locales, one of which has variants and a draft.
     """
@@ -67,18 +68,16 @@ def translations_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.fixture
-def app(translations_dir: Path) -> FastAPI:
+@pytest.fixture(name="app")
+def app_fixture(translations_dir: Path) -> FastAPI:
     """
     A FastAPI app pointing at the test translations directory.
     """
-    from fastapi_simple_i18n.web.app import create_app
-
     return create_app(Settings(translations_dir=translations_dir, page_size=10))
 
 
-@pytest.fixture
-def client(app: FastAPI) -> TestClient:
+@pytest.fixture(name="client")
+def client_fixture(app: FastAPI) -> TestClient:
     """
     A synchronous test client wrapping the FastAPI app.
     """
@@ -112,6 +111,21 @@ def test_locale_display_name_and_flag() -> None:
     assert flag_emoji("es") == ""
     assert flag_emoji("pt-BR") == "🇧🇷"
     assert flag_emoji("nonsense") == ""
+
+
+def test_locale_display_name_accepts_every_spelling() -> None:
+    """
+    A file named after any spelling of a locale is still a locale.
+
+    Locale files are named after locales, and the library accepts ``_`` and
+    ``-`` interchangeably, so the UI must too: an ``es_ES.json`` file gets the
+    same display name (and flag) as an ``es-ES.json`` one.
+    """
+    assert locale_display_name("es_ES") == locale_display_name("es-ES") == locale_display_name("ES-es")
+    assert locale_display_name("zh_Hans_CN") == locale_display_name("zh-hans-cn")
+    assert flag_emoji("es_ES") == flag_emoji("es-ES") == "🇪🇸"
+    assert flag_emoji("zh_Hans_CN") == "🇨🇳"
+    assert flag_emoji("not_a_locale") == ""
 
 
 def test_placeholder_names_recognises_both_syntaxes() -> None:
@@ -340,8 +354,6 @@ def test_index_shows_missing_directory(tmp_path: Path) -> None:
     """
     When the directory is missing, the page explains what to do instead of erroring.
     """
-    from fastapi_simple_i18n.web.app import create_app
-
     app = create_app(Settings(translations_dir=tmp_path / "missing"))
     response = TestClient(app).get("/")
     assert response.status_code == 200
@@ -522,8 +534,6 @@ def test_healthz_reflects_directory_state(translations_dir: Path) -> None:
     """
     /healthz returns a small JSON object describing the managed directory.
     """
-    from fastapi_simple_i18n.web.app import create_app
-
     response = TestClient(create_app(Settings(translations_dir=translations_dir))).get("/healthz")
     assert response.status_code == 200
     payload = response.json()
@@ -535,8 +545,6 @@ def test_health_alias_reflects_directory_state(translations_dir: Path) -> None:
     """
     /health is an alias of /healthz, kept for monitors that default to it.
     """
-    from fastapi_simple_i18n.web.app import create_app
-
     response = TestClient(create_app(Settings(translations_dir=translations_dir))).get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
@@ -546,8 +554,6 @@ def test_healthz_reports_missing_directory(tmp_path: Path) -> None:
     """
     An empty directory reports status=no-translations rather than erroring.
     """
-    from fastapi_simple_i18n.web.app import create_app
-
     response = TestClient(create_app(Settings(translations_dir=tmp_path))).get("/healthz")
     assert response.status_code == 200
     assert response.json()["status"] == "no-translations"

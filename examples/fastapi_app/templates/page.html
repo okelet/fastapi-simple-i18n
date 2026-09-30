@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<html lang="{{ locale }}">
+{# The request context is available as two globals: the resolved locale (a
+   babel Locale, so ``.language`` and ``.territory`` are reachable) and the
+   active timezone (None when no override is in effect). #}
+<html lang="{{ get_current_locale().language }}">
 <head>
     <meta charset="utf-8">
     <title>{% trans %}fastapi-simple-i18n example{% endtrans %}</title>
@@ -30,10 +33,13 @@
 
     <ul>
         <li>{{ t_number(total) }}</li>
+        <li>{{ t_money(total, "EUR") }}</li>
+        <li>{{ t_amount(total) }}</li>
         <li>{{ t_date(today) }}</li>
         {# ``t_datetime`` honors the active timezone (the one picked by the
-           middleware's ``timezone_resolver``, ``UTC`` by default). #}
-        <li>{{ t_datetime(moment) }} ({{ timezone }})</li>
+           middleware's ``timezone_resolver``, ``UTC`` by default), which
+           ``get_current_tz()`` reports. #}
+        <li>{{ t_datetime(moment) }} ({{ get_current_tz() }})</li>
     </ul>
 </body>
 </html>
